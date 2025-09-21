@@ -29,3 +29,5 @@ clean:
 
 src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+clean:
+	rm -f $(OBJS) $(TARGET).elf $(TARGET).z64 $(ROMFS_IMG)
