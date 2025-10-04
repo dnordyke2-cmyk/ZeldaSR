@@ -1,4 +1,4 @@
-name: Build ROM (Prebuilt Toolchain)
+name: Build ROM (Using latest toolchain archive)
 
 on:
   push:
@@ -7,30 +7,33 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install prebuilt N64 toolchain
+      - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget tar
-          wget https://github.com/n64-tools/gcc-toolchain-mips64/releases/download/v1.0.0/mips64-elf-toolchain-linux.tar.gz
-          tar -xzf mips64-elf-toolchain-linux.tar.gz
-          sudo mv gcc-toolchain-mips64 /opt/mips64-elf-toolchain
-          echo "/opt/mips64-elf-toolchain/bin" >> $GITHUB_PATH
-          which mips-n64-gcc || echo "Toolchain not found after download"
+          sudo apt-get install -y wget tar build-essential git python3 unzip texinfo bison flex
+
+      - name: Download toolchain archive
+        run: |
+          wget https://github.com/n64-tools/gcc-toolchain-mips64/archive/refs/tags/latest.tar.gz
+          tar -xzf latest.tar.gz
+          mv gcc-toolchain-mips64-* mips64-elf-toolchain
+          echo "/opt/mips64-elf-toolchain/bin:$(pwd)/mips64-elf-toolchain/bin" >> $GITHUB_PATH
 
       - name: Build libdragon runtime
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
-          export PATH=/opt/mips64-elf-toolchain/bin:$PATH
+          export PATH="$(pwd)/../mips64-elf-toolchain/bin:$PATH"
           make -C libdragon install
         shell: bash
 
       - name: Build ROM
         run: |
-          export PATH=/opt/mips64-elf-toolchain/bin:$PATH
+          export PATH="$(pwd)/mips64-elf-toolchain/bin:$PATH"
           make clean all
         shell: bash
 
