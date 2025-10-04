@@ -1,4 +1,4 @@
-name: Build ROM (Source-built toolchain)
+name: Build ROM (Toolchain from source, fixed path)
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
       - name: Build toolchain from source
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
-          cd /opt/libdragon
+          cd /opt/libdragon/tools
           ./build-toolchain.sh
           echo "/opt/libdragon/tools/mips64-elf/bin" >> $GITHUB_PATH
           echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
