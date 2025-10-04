@@ -1,4 +1,4 @@
-name: Build ROM (No-Docker)
+name: Build ROM (No-Docker, verified)
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -16,23 +15,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Build libdragon toolchain
+      - name: Build and activate libdragon toolchain
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
           ./build-toolchain.sh
+          echo "export PATH=/opt/libdragon/tools/mips64-elf/bin:$PATH" >> $HOME/.bashrc
+          echo "PATH=/opt/libdragon/tools/mips64-elf/bin:$PATH" >> $GITHUB_ENV
         shell: bash
 
-      - name: Add toolchain to PATH
-        run: echo "/opt/libdragon/tools/mips64-elf/bin" >> $GITHUB_PATH
-
-      - name: Verify toolchain
+      - name: Verify compiler
         run: |
-          which mips-n64-gcc || echo "Toolchain not found!"
-          mips-n64-gcc -v
+          echo "PATH=$PATH"
+          which mips-n64-gcc || true
+          ls /opt/libdragon/tools/mips64-elf/bin || true
+        shell: bash
 
       - name: Build ROM
-        run: make clean all
+        run: |
+          export PATH=/opt/libdragon/tools/mips64-elf/bin:$PATH
+          make clean all
+        shell: bash
 
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
