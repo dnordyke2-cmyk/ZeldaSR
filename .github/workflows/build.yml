@@ -7,29 +7,33 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      # install dependencies for building libdragon toolchain
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      # build libdragon toolchain (this compiles mips-n64-gcc from source)
       - name: Build libdragon toolchain
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
           ./build-toolchain.sh
-          echo "PATH=/opt/libdragon/tools/mips64-elf/bin:$PATH" >> $GITHUB_ENV
+        shell: bash
 
-      # build your ROM
-      - name: Build ROM
+      - name: Add toolchain to PATH
+        run: echo "/opt/libdragon/tools/mips64-elf/bin" >> $GITHUB_PATH
+
+      - name: Verify toolchain
         run: |
-          make clean all
+          which mips-n64-gcc || echo "Toolchain not found!"
+          mips-n64-gcc -v
 
-      # upload the generated files
+      - name: Build ROM
+        run: make clean all
+
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
