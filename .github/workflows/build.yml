@@ -1,4 +1,4 @@
-name: Build ROM (Using latest toolchain archive)
+name: Build ROM (Libdragon source build fixed)
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -16,19 +15,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget tar build-essential git python3 unzip texinfo bison flex
 
-      - name: Download toolchain archive
+      - name: Download toolchain source
         run: |
           wget https://github.com/n64-tools/gcc-toolchain-mips64/archive/refs/tags/latest.tar.gz
           tar -xzf latest.tar.gz
           mv gcc-toolchain-mips64-* mips64-elf-toolchain
-          echo "/opt/mips64-elf-toolchain/bin:$(pwd)/mips64-elf-toolchain/bin" >> $GITHUB_PATH
+          echo "$(pwd)/mips64-elf-toolchain/bin" >> $GITHUB_PATH
 
-      - name: Build libdragon runtime
+      - name: Build and install libdragon
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
-          export PATH="$(pwd)/../mips64-elf-toolchain/bin:$PATH"
-          make -C libdragon install
+          export PATH="$(pwd)/../../mips64-elf-toolchain/bin:$PATH"
+          make install
         shell: bash
 
       - name: Build ROM
