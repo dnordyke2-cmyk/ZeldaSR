@@ -1,4 +1,4 @@
-name: Build ROM
+name: Build ROM (No-Docker)
 
 on:
   push:
@@ -10,12 +10,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build via libdragon Docker
+      # install dependencies for building libdragon toolchain
+      - name: Install prerequisites
         run: |
-          docker run --rm --platform linux/amd64 \
-            -v "$PWD:/src" -w /src \
-            vieux/libdragon make clean all
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
+      # build libdragon toolchain (this compiles mips-n64-gcc from source)
+      - name: Build libdragon toolchain
+        run: |
+          git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
+          cd /opt/libdragon
+          ./build-toolchain.sh
+          echo "PATH=/opt/libdragon/tools/mips64-elf/bin:$PATH" >> $GITHUB_ENV
+
+      # build your ROM
+      - name: Build ROM
+        run: |
+          make clean all
+
+      # upload the generated files
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
