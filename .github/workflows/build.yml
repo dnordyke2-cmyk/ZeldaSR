@@ -1,4 +1,4 @@
-name: Build ROM (Fixed install path)
+name: Build ROM (Correct toolchain prefix)
 
 on:
   push:
@@ -22,19 +22,21 @@ jobs:
           mv gcc-toolchain-mips64-* mips64-elf-toolchain
           echo "$(pwd)/mips64-elf-toolchain/bin" >> $GITHUB_PATH
 
-      - name: Build and install libdragon (N64_INST override)
+      - name: Build and install libdragon (set N64_INST and N64_PREFIX)
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
-          export PATH="$(pwd)/../../mips64-elf-toolchain/bin:$PATH"
           export N64_INST=/opt/libdragon
+          export N64_PREFIX=$(pwd)/../../mips64-elf-toolchain/bin/mips64-elf-
+          export PATH="$(pwd)/../../mips64-elf-toolchain/bin:$PATH"
           make install
         shell: bash
 
       - name: Build ROM
         run: |
-          export PATH="$(pwd)/mips64-elf-toolchain/bin:$PATH"
           export N64_INST=/opt/libdragon
+          export PATH="$(pwd)/mips64-elf-toolchain/bin:$PATH"
+          export N64_PREFIX=$(pwd)/mips64-elf-toolchain/bin/mips64-elf-
           make clean all
         shell: bash
 
