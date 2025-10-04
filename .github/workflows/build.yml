@@ -1,4 +1,4 @@
-name: Build ROM (Libdragon source build fixed)
+name: Build ROM (User-local install path)
 
 on:
   push:
@@ -22,17 +22,18 @@ jobs:
           mv gcc-toolchain-mips64-* mips64-elf-toolchain
           echo "$(pwd)/mips64-elf-toolchain/bin" >> $GITHUB_PATH
 
-      - name: Build and install libdragon
+      - name: Build and install libdragon (local prefix)
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
           export PATH="$(pwd)/../../mips64-elf-toolchain/bin:$PATH"
-          make install
+          make install PREFIX=/opt/libdragon
         shell: bash
 
       - name: Build ROM
         run: |
           export PATH="$(pwd)/mips64-elf-toolchain/bin:$PATH"
+          export N64_INST=/opt/libdragon
           make clean all
         shell: bash
 
