@@ -1,4 +1,4 @@
-name: Build ROM (Force toolchain path)
+name: Build ROM (Source-built toolchain)
 
 on:
   push:
@@ -13,30 +13,24 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget tar build-essential git python3 unzip texinfo bison flex
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Download toolchain source
-        run: |
-          wget https://github.com/n64-tools/gcc-toolchain-mips64/archive/refs/tags/latest.tar.gz
-          tar -xzf latest.tar.gz
-          mv gcc-toolchain-mips64-* mips64-elf-toolchain
-          echo "$(pwd)/mips64-elf-toolchain/bin" >> $GITHUB_PATH
-
-      - name: Build and install libdragon (force N64_PREFIX)
+      - name: Build toolchain from source
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon
-          export N64_INST=/opt/libdragon
-          export N64_PREFIX=$GITHUB_WORKSPACE/mips64-elf-toolchain/bin/mips64-elf-
+          ./build-toolchain.sh
+          echo "/opt/libdragon/tools/mips64-elf/bin" >> $GITHUB_PATH
+          echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
+
+      - name: Install libdragon
+        run: |
+          cd /opt/libdragon
           make install
-        shell: bash
 
       - name: Build ROM
         run: |
-          export N64_INST=/opt/libdragon
-          export N64_PREFIX=$GITHUB_WORKSPACE/mips64-elf-toolchain/bin/mips64-elf-
           make clean all
-        shell: bash
 
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
