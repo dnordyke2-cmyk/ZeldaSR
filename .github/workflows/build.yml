@@ -1,0 +1,25 @@
+name: Build ROM
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build via libdragon Docker
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/src" -w /src \
+            vieux/libdragon make clean all
+
+      - name: Upload ROM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shattered_realms-rom
+          path: |
+            *.z64
+            romfs.dfs
