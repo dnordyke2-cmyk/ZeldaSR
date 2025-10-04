@@ -1,4 +1,4 @@
-name: Build ROM (Prebuilt toolchain)
+name: Build ROM (Prebuilt Toolchain)
 
 on:
   push:
@@ -14,11 +14,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y wget tar
-          wget https://github.com/anacierdem/mips64-elf-toolchain/releases/download/v12.2.0/mips64-elf-toolchain-linux.tar.gz
+          wget https://github.com/n64-tools/gcc-toolchain-mips64/releases/download/v1.0.0/mips64-elf-toolchain-linux.tar.gz
           tar -xzf mips64-elf-toolchain-linux.tar.gz
-          sudo mv mips64-elf-toolchain /opt/mips64-elf-toolchain
+          sudo mv gcc-toolchain-mips64 /opt/mips64-elf-toolchain
           echo "/opt/mips64-elf-toolchain/bin" >> $GITHUB_PATH
-          which mips-n64-gcc || echo "mips-n64-gcc not found after install"
+          which mips-n64-gcc || echo "Toolchain not found after download"
 
       - name: Build libdragon runtime
         run: |
