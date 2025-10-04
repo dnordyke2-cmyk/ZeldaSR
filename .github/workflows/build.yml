@@ -1,4 +1,4 @@
-name: Build ROM (Toolchain from source, fixed path)
+name: Build ROM (Toolchain from source with N64_INST)
 
 on:
   push:
@@ -19,18 +19,24 @@ jobs:
         run: |
           git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
           cd /opt/libdragon/tools
+          export N64_INST=/opt/libdragon
           ./build-toolchain.sh
           echo "/opt/libdragon/tools/mips64-elf/bin" >> $GITHUB_PATH
           echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
+        shell: bash
 
       - name: Install libdragon
         run: |
           cd /opt/libdragon
+          export N64_INST=/opt/libdragon
           make install
+        shell: bash
 
       - name: Build ROM
         run: |
+          export N64_INST=/opt/libdragon
           make clean all
+        shell: bash
 
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
