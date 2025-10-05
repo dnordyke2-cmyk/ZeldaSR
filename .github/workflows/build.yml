@@ -64,9 +64,11 @@ jobs:
         run: |
           set -e
           echo "Building Shattered Realms ROM..."
+          cd $GITHUB_WORKSPACE
           export PATH="/home/runner/.local/libdragon/tools/toolchain/bin:$PATH"
           export N64_INST=/home/runner/.local/libdragon
-          command -v mips64-elf-gcc
+          which mips64-elf-gcc || echo "gcc not in PATH"
+          ls -l
           make clean all 2>&1 | tee build.log
 
       - name: Upload ROM artifact
