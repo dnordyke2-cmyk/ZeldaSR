@@ -1,4 +1,4 @@
-name: Build ROM (Finalized Libdragon Path Fix)
+name: Build ROM (Prebuilt Toolchain + Cache)
 
 on:
   push:
@@ -10,11 +10,13 @@ jobs:
 
     env:
       N64_INST: /home/runner/.local/libdragon
+      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache toolchain & libdragon
+      # Restore cached toolchain/libdragon if present
+      - name: Cache toolchain and libdragon
         id: cache-libdragon
         uses: actions/cache@v4
         with:
@@ -22,43 +24,58 @@ jobs:
             /home/runner/.local/libdragon/tools
             /home/runner/.local/libdragon/include
             /home/runner/.local/libdragon/lib
-          key: n64-finalcache-v2-${{ runner.os }}
+          key: n64-prebuilt-v1-${{ runner.os }}
 
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Build toolchain if missing
+      - name: Download pre-built toolchain
+        run: |
+          mkdir -p /home/runner/.local/libdragon/tools/toolchain
+          cd /home/runner/.local/libdragon/tools/toolchain
+          echo "Fetching pre-built toolchain..."
+          wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-latest/mips64-elf-toolchain-linux.tar.gz
+          tar -xzf mips64-elf-toolchain-linux.tar.gz
+          echo "${TOOLCHAIN_PATH}" >> "$GITHUB_PATH"
+          echo "N64_INST=/home/runner/.local/libdragon" >> "$GITHUB_ENV"
+
+      - name: Build libdragon libraries (lightweight)
         shell: bash
         run: |
           set -e
-          if ! find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" -print -quit | grep -q .; then
-            mkdir -p /home/runner/.local
+          if [ ! -d /home/runner/.local/libdragon/lib ]; then
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
-            cd /home/runner/.local/libdragon/tools
-            export N64_INST=/home/runner/.local/libdragon
-            ./build-toolchain.sh || true
             cd /home/runner/.local/libdragon
-            make install || true
+            export N64_INST=/home/runner/.local/libdragon
+            export PATH="${TOOLCHAIN_PATH}:$PATH"
+            make install
           fi
 
-      - name: Locate built toolchain
+      # Save cache even if ROM fails to build
+      - name: Save cache (always)
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/.local/libdragon/tools
+            /home/runner/.local/libdragon/include
+            /home/runner/.local/libdragon/lib
+          key: n64-prebuilt-v1-${{ runner.os }}
+
+      - name: Verify compiler
         shell: bash
         run: |
-          echo "Searching recursively for compiler binaries..."
-          find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" || true
+          echo "PATH=$PATH"
+          command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
 
       - name: Build ROM
         shell: bash
         run: |
           set -e
-          # Look up compiler directory dynamically
-          COMP_PATH=$(find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
-          echo "Detected compiler path: ${COMP_PATH}"
-          export PATH="${COMP_PATH}:$PATH"
+          export PATH="${TOOLCHAIN_PATH}:$PATH"
           export N64_INST=/home/runner/.local/libdragon
-          command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
           make clean all 2>&1 | tee build.log
 
       - name: Upload ROM artifact
