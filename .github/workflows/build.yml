@@ -1,4 +1,4 @@
-name: Build ROM (Cached Toolchain, correct path)
+name: Build ROM (Cached Toolchain, forced save)
 
 on:
   push:
@@ -13,6 +13,7 @@ jobs:
 
       # Restore cached toolchain + libdragon
       - name: Cache toolchain and libdragon
+        id: cache-toolchain
         uses: actions/cache@v4
         with:
           path: |
@@ -26,9 +27,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Build toolchain (if not cached)
+      - name: Build toolchain if missing
         run: |
-          if [ ! -x /opt/libdragon/tools/build/bin/mips64-elf-gcc ]; then
+          if [ ! -x /opt/libdragon/tools/build/bin/mips64-elf-gcc ] && [ ! -x /opt/libdragon/tools/mips64-elf/bin/mips64-elf-gcc ]; then
             git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
             cd /opt/libdragon/tools
             export N64_INST=/opt/libdragon
@@ -42,9 +43,20 @@ jobs:
           echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
         shell: bash
 
+      # Force cache save even if later steps fail
+      - name: Save toolchain cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/libdragon/tools
+            /opt/libdragon/include
+            /opt/libdragon/lib
+          key: n64-toolchain-libdragon
+
       - name: Verify toolchain
         run: |
-          which mips64-elf-gcc || echo "Not found"
+          which mips64-elf-gcc || echo "Compiler not in PATH"
           ls -R /opt/libdragon/tools | head -40
         shell: bash
 
@@ -56,6 +68,7 @@ jobs:
         shell: bash
 
       - name: Upload ROM artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: shattered_realms-rom
