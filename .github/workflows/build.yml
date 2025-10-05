@@ -1,4 +1,4 @@
-name: Build ROM (Cached Toolchain)
+name: Build ROM (Cached Toolchain, correct path)
 
 on:
   push:
@@ -26,9 +26,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Build toolchain (only if not cached)
+      - name: Build toolchain (if not cached)
         run: |
-          if [ ! -x /opt/libdragon/tools/mips64-elf/bin/mips-n64-gcc ]; then
+          if [ ! -x /opt/libdragon/tools/build/bin/mips64-elf-gcc ]; then
             git clone https://github.com/DragonMinded/libdragon.git /opt/libdragon
             cd /opt/libdragon/tools
             export N64_INST=/opt/libdragon
@@ -37,13 +37,20 @@ jobs:
             export N64_INST=/opt/libdragon
             make install
           fi
+          echo "/opt/libdragon/tools/build/bin" >> $GITHUB_PATH
           echo "/opt/libdragon/tools/mips64-elf/bin" >> $GITHUB_PATH
           echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
         shell: bash
 
+      - name: Verify toolchain
+        run: |
+          which mips64-elf-gcc || echo "Not found"
+          ls -R /opt/libdragon/tools | head -40
+        shell: bash
+
       - name: Build ROM
         run: |
-          export PATH=/opt/libdragon/tools/mips64-elf/bin:$PATH
+          export PATH=/opt/libdragon/tools/build/bin:/opt/libdragon/tools/mips64-elf/bin:$PATH
           export N64_INST=/opt/libdragon
           make clean all
         shell: bash
