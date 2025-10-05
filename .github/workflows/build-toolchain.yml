@@ -2,25 +2,18 @@ name: Build and Cache N64 Toolchain
 
 on:
   workflow_dispatch:
-    inputs: {}  # manual trigger
 
 jobs:
   build-toolchain:
     runs-on: ubuntu-latest
-
     env:
       N64_INST: /home/runner/.local/libdragon
-
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
-
       - name: Build toolchain from source
-        shell: bash
         run: |
           mkdir -p /home/runner/.local/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
@@ -28,14 +21,11 @@ jobs:
           export N64_INST=/home/runner/.local/libdragon
           ./build-toolchain.sh
           cd /home/runner/.local/libdragon
-          export N64_INST=/home/runner/.local/libdragon
           make install
-
       - name: Package toolchain
         run: |
           cd /home/runner/.local/libdragon/tools
           tar -czf $GITHUB_WORKSPACE/mips64-elf-toolchain-cache.tar.gz .
-
       - name: Upload toolchain cache artifact
         uses: actions/upload-artifact@v4
         with:
