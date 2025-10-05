@@ -1,4 +1,4 @@
-name: Build ROM (Workspace Cache, Stable Paths)
+name: Build ROM (Home-cached Libdragon)
 
 on:
   push:
@@ -9,78 +9,66 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      N64_ROOT: ${{ github.workspace }}/.n64
-      LIBDRAGON_DIR: ${{ github.workspace }}/.n64/libdragon
-      TOOLCHAIN_BIN: ${{ github.workspace }}/.n64/libdragon/tools/toolchain/bin
+      N64_INST: /home/runner/.local/libdragon
+      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
 
     steps:
       - uses: actions/checkout@v4
 
-      # Restore toolchain + libdragon installed directly under the repo
-      - name: Cache toolchain and libdragon
-        id: cache-n64
+      - name: Cache toolchain & libdragon
+        id: cache-libdragon
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.LIBDRAGON_DIR }}/tools
-            ${{ env.LIBDRAGON_DIR }}/include
-            ${{ env.LIBDRAGON_DIR }}/lib
-          key: n64-ws-cache-v3-${{ runner.os }}
+            /home/runner/.local/libdragon/tools
+            /home/runner/.local/libdragon/include
+            /home/runner/.local/libdragon/lib
+          key: n64-homecache-v1-${{ runner.os }}
 
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Build toolchain if missing (in workspace)
+      - name: Build toolchain if missing
         shell: bash
         run: |
           set -e
-          if [ ! -x "${TOOLCHAIN_BIN}/mips64-elf-gcc" ]; then
-            mkdir -p "${N64_ROOT}"
-            if [ ! -d "${LIBDRAGON_DIR}" ]; then
-              git clone --depth=1 https://github.com/DragonMinded/libdragon.git "${LIBDRAGON_DIR}"
-            fi
-            cd "${LIBDRAGON_DIR}/tools"
-            export N64_INST="${LIBDRAGON_DIR}"
+          if [ ! -x "${TOOLCHAIN_PATH}/mips64-elf-gcc" ]; then
+            mkdir -p /home/runner/.local
+            git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
+            cd /home/runner/.local/libdragon/tools
+            export N64_INST=/home/runner/.local/libdragon
             ./build-toolchain.sh
-            cd "${LIBDRAGON_DIR}"
-            export N64_INST="${LIBDRAGON_DIR}"
+            cd /home/runner/.local/libdragon
             make install
           fi
-          echo "${TOOLCHAIN_BIN}" >> "$GITHUB_PATH"
-          echo "N64_INST=${LIBDRAGON_DIR}" >> "$GITHUB_ENV"
+          echo "${TOOLCHAIN_PATH}" >> "$GITHUB_PATH"
+          echo "N64_INST=/home/runner/.local/libdragon" >> "$GITHUB_ENV"
 
-      # Save cache even if later steps fail (so we don't rebuild GCC next run)
-      - name: Save cache (always)
+      - name: Save cache even if build fails
         if: always()
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.LIBDRAGON_DIR }}/tools
-            ${{ env.LIBDRAGON_DIR }}/include
-            ${{ env.LIBDRAGON_DIR }}/lib
-          key: n64-ws-cache-v3-${{ runner.os }}
+            /home/runner/.local/libdragon/tools
+            /home/runner/.local/libdragon/include
+            /home/runner/.local/libdragon/lib
+          key: n64-homecache-v1-${{ runner.os }}
 
-      - name: Verify toolchain
+      - name: Verify compiler
         shell: bash
         run: |
           echo "PATH=$PATH"
-          which mips64-elf-gcc || true
-          if [ ! -x "${TOOLCHAIN_BIN}/mips64-elf-gcc" ]; then
-            echo "Compiler not found at ${TOOLCHAIN_BIN}, searching..."
-            find "${LIBDRAGON_DIR}/tools" -maxdepth 4 -type f -name mips64-elf-gcc -print || true
-          fi
+          find /home/runner/.local/libdragon/tools -maxdepth 4 -type f -name "mips64-elf-gcc"
 
       - name: Build ROM
         shell: bash
         run: |
           set -e
-          export PATH="${TOOLCHAIN_BIN}:$PATH"
-          export N64_INST="${LIBDRAGON_DIR}"
-          # Optional shims if any older scripts expect mips-n64-* names
-          command -v mips64-elf-gcc >/dev/null && sudo ln -sf "$(command -v mips64-elf-gcc)" /usr/local/bin/mips-n64-gcc || true
-          command -v mips64-elf-ld  >/dev/null && sudo ln -sf "$(command -v mips64-elf-ld)"  /usr/local/bin/mips-n64-ld  || true
+          export PATH="${TOOLCHAIN_PATH}:$PATH"
+          export N64_INST=/home/runner/.local/libdragon
+          command -v mips64-elf-gcc
           make clean all 2>&1 | tee build.log
 
       - name: Upload ROM artifact
