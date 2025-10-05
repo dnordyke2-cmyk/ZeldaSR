@@ -1,33 +1,56 @@
-TARGET := shattered_realms
-OBJS := src/main.o src/hud.o src/dungeon.o src/combat.o src/audio.o
+# --------------------------------------------------------------------
+# Zelda: Shattered Realms  (Minimal Alpha)
+# Compatible with libdragon 3.x and mips64-elf toolchain
+# --------------------------------------------------------------------
 
-CC := mips-n64-gcc
-CFLAGS := -std=gnu11 -O2 -G0 -Wall -Wextra
-LDFLAGS := -ldragon -lm
+# Toolchain
+N64_PREFIX  := mips64-elf-
+CC          := $(N64_PREFIX)gcc
+LD          := $(N64_PREFIX)ld
+OBJCOPY     := $(N64_PREFIX)objcopy
 
-ROMFS_DIR := assets/romfs
-ROMFS_IMG := romfs.dfs
-ROMFS_FILES := $(shell find $(ROMFS_DIR) -type f 2>/dev/null)
+# Paths
+N64_INST    ?= /opt/libdragon
+LIBDRAGON   := $(N64_INST)
+INCLUDES    := -I$(LIBDRAGON)/include
+LIBS        := -L$(LIBDRAGON)/lib -ldragon -lm
 
-.PHONY: all clean
+# Project files
+SRCS        := src/main.c src/hud.c src/dungeon.c src/combat.c src/audio.c
+OBJS        := $(SRCS:.c=.o)
+TARGET_ELF  := shattered_realms.elf
+TARGET_ROM  := shattered_realms.z64
+ROMFS       := assets/romfs
 
-all: $(TARGET).z64
+# Compiler flags
+CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections $(INCLUDES)
+LDFLAGS := -T $(LIBDRAGON)/lib/n64.ld -L$(LIBDRAGON)/lib $(LIBS)
 
-$(ROMFS_IMG): $(ROMFS_FILES)
-	@echo "Building ROM filesystem: $@"
-	mkdfs $@ $(ROMFS_DIR)
+# --------------------------------------------------------------------
+# Rules
+# --------------------------------------------------------------------
 
-$(TARGET).elf: $(OBJS)
-	$(CC) -o $@ $^ $(LDFLAGS)
+all: $(TARGET_ROM)
 
-$(TARGET).z64: $(TARGET).elf $(ROMFS_IMG)
-	n64tool -l 2M -o $@ -t "SHATTERED REALMS" \
-	  -h /usr/mips64-elf/lib/bootcode.bin \
-	  $(TARGET).elf -r $(ROMFS_IMG)
+$(TARGET_ELF): $(OBJS)
+	@echo "  [LD]  $@"
+	$(CC) -o $@ $(OBJS) $(LDFLAGS)
+
+$(TARGET_ROM): $(TARGET_ELF)
+	@echo "  [ROM] $@"
+	mkdfs $(ROMFS) romfs.dfs
+	n64tool -l 2M -t "Shattered Realms" -h $(LIBDRAGON)/lib/header -o $@ $< -s 1M -B romfs.dfs
 	chksum64 $@
 
-src/%.o: src/%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+%.o: %.c
+	@echo "  [CC]  $<"
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET).elf $(TARGET).z64 $(ROMFS_IMG)
+	@echo "  [CLEAN]"
+	rm -f $(OBJS) $(TARGET_ELF) $(TARGET_ROM) romfs.dfs
+
+# --------------------------------------------------------------------
+# Convenience
+# --------------------------------------------------------------------
+.PHONY: all clean
