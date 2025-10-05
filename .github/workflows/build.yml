@@ -1,20 +1,41 @@
-name: Build Toolchain and ROM
+name: Build Toolchain and ROM (cached)
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build-toolchain:
+  build-toolchain-and-rom:
     runs-on: ubuntu-latest
-    outputs:
-      toolchain-path: ${{ steps.upload.outputs.artifact-path }}
+
+    env:
+      N64_INST: /home/runner/.local/libdragon
+      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
+
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore cached toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/.local/libdragon/tools
+            /home/runner/.local/libdragon/include
+            /home/runner/.local/libdragon/lib
+          key: n64-libdragon-cache-v3-${{ runner.os }}
+
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
-      - name: Build toolchain
+
+      - name: Build toolchain if missing
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        shell: bash
         run: |
+          echo "Toolchain not found in cache; building..."
           mkdir -p /home/runner/.local/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
           cd /home/runner/.local/libdragon/tools
@@ -22,45 +43,44 @@ jobs:
           ./build-toolchain.sh
           cd /home/runner/.local/libdragon
           make install
-          cd /home/runner/.local/libdragon/tools
-          tar -czf $GITHUB_WORKSPACE/mips64-elf-toolchain-cache.tar.gz .
-      - id: upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: n64-toolchain-cache
-          path: mips64-elf-toolchain-cache.tar.gz
 
-  build-rom:
-    needs: build-toolchain
-    runs-on: ubuntu-latest
-    env:
-      N64_INST: /home/runner/.local/libdragon
-      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Save toolchain to cache
+        if: always()
+        uses: actions/cache@v4
         with:
-          name: n64-toolchain-cache
-          path: /home/runner/.local/libdragon/tools
-      - run: |
-          cd /home/runner/.local/libdragon/tools
-          tar -xzf mips64-elf-toolchain-cache.tar.gz
-          echo "${TOOLCHAIN_PATH}" >> "$GITHUB_PATH"
-          echo "N64_INST=/home/runner/.local/libdragon" >> "$GITHUB_ENV"
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
-      - run: |
-          export PATH="${TOOLCHAIN_PATH}:$PATH"
+          path: |
+            /home/runner/.local/libdragon/tools
+            /home/runner/.local/libdragon/include
+            /home/runner/.local/libdragon/lib
+          key: n64-libdragon-cache-v3-${{ runner.os }}
+
+      - name: Verify compiler
+        run: |
+          echo "Verifying compiler..."
+          find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" || true
+
+      - name: Build ROM
+        shell: bash
+        run: |
+          set -e
+          echo "Building Shattered Realms ROM..."
+          export PATH="/home/runner/.local/libdragon/tools/toolchain/bin:$PATH"
           export N64_INST=/home/runner/.local/libdragon
+          command -v mips64-elf-gcc
           make clean all 2>&1 | tee build.log
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload ROM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: shattered_realms-rom
           path: |
             *.z64
             romfs.dfs
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload Debug Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: shattered_realms-debug
           path: |
