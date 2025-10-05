@@ -1,78 +1,66 @@
-name: Build ROM (using prebuilt toolchain artifact)
+name: Build Toolchain and ROM
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-toolchain:
     runs-on: ubuntu-latest
-
-    env:
-      N64_INST: /home/runner/.local/libdragon
-      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
-
+    outputs:
+      toolchain-path: ${{ steps.upload.outputs.artifact-path }}
     steps:
-      - uses: actions/checkout@v4
-
-      # Download prebuilt toolchain artifact uploaded from build-toolchain.yml
-      - name: Download toolchain artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: n64-toolchain-cache
-          path: /home/runner/.local/libdragon/tools
-
-      - name: Extract toolchain
-        shell: bash
-        run: |
-          mkdir -p /home/runner/.local/libdragon/tools
-          cd /home/runner/.local/libdragon/tools
-          tar -xzf mips64-elf-toolchain-cache.tar.gz
-          echo "${TOOLCHAIN_PATH}" >> $GITHUB_PATH
-          echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
-
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
-
-      - name: Clone libdragon headers (no toolchain rebuild)
-        shell: bash
+      - name: Build toolchain
         run: |
-          if [ ! -d /home/runner/.local/libdragon/lib ]; then
-            git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
-            cd /home/runner/.local/libdragon
-            export N64_INST=/home/runner/.local/libdragon
-            export PATH="${TOOLCHAIN_PATH}:$PATH"
-            make install
-          fi
+          mkdir -p /home/runner/.local/libdragon
+          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
+          cd /home/runner/.local/libdragon/tools
+          export N64_INST=/home/runner/.local/libdragon
+          ./build-toolchain.sh
+          cd /home/runner/.local/libdragon
+          make install
+          cd /home/runner/.local/libdragon/tools
+          tar -czf $GITHUB_WORKSPACE/mips64-elf-toolchain-cache.tar.gz .
+      - id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: n64-toolchain-cache
+          path: mips64-elf-toolchain-cache.tar.gz
 
-      - name: Verify compiler
-        shell: bash
-        run: |
-          echo "PATH=$PATH"
-          command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
-
-      - name: Build ROM
-        shell: bash
-        run: |
-          set -e
+  build-rom:
+    needs: build-toolchain
+    runs-on: ubuntu-latest
+    env:
+      N64_INST: /home/runner/.local/libdragon
+      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: n64-toolchain-cache
+          path: /home/runner/.local/libdragon/tools
+      - run: |
+          cd /home/runner/.local/libdragon/tools
+          tar -xzf mips64-elf-toolchain-cache.tar.gz
+          echo "${TOOLCHAIN_PATH}" >> "$GITHUB_PATH"
+          echo "N64_INST=/home/runner/.local/libdragon" >> "$GITHUB_ENV"
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
+      - run: |
           export PATH="${TOOLCHAIN_PATH}:$PATH"
           export N64_INST=/home/runner/.local/libdragon
           make clean all 2>&1 | tee build.log
-
-      - name: Upload ROM artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: shattered_realms-rom
           path: |
             *.z64
             romfs.dfs
-
-      - name: Upload Debug Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: shattered_realms-debug
           path: |
