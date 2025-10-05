@@ -1,4 +1,4 @@
-name: Build ROM (Cached Toolchain, forced save)
+name: Build ROM (Cached Toolchain + Debug)
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Restore cached toolchain + libdragon
+      # Restore any existing cached toolchain/libdragon
       - name: Cache toolchain and libdragon
         id: cache-toolchain
         uses: actions/cache@v4
@@ -43,7 +43,7 @@ jobs:
           echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
         shell: bash
 
-      # Force cache save even if later steps fail
+      # Force a cache save even if later steps fail
       - name: Save toolchain cache
         if: always()
         uses: actions/cache@v4
@@ -56,17 +56,26 @@ jobs:
 
       - name: Verify toolchain
         run: |
-          which mips64-elf-gcc || echo "Compiler not in PATH"
-          ls -R /opt/libdragon/tools | head -40
+          echo "Checking compiler..."
+          if [ -x /opt/libdragon/tools/build/bin/mips64-elf-gcc ]; then
+            echo "Found compiler in build/bin:"
+            ls -l /opt/libdragon/tools/build/bin/mips64-elf-gcc
+          elif [ -x /opt/libdragon/tools/mips64-elf/bin/mips64-elf-gcc ]; then
+            echo "Found compiler in mips64-elf/bin:"
+            ls -l /opt/libdragon/tools/mips64-elf/bin/mips64-elf-gcc
+          else
+            echo "Compiler not found!"
+          fi
         shell: bash
 
       - name: Build ROM
         run: |
           export PATH=/opt/libdragon/tools/build/bin:/opt/libdragon/tools/mips64-elf/bin:$PATH
           export N64_INST=/opt/libdragon
-          make clean all
+          make clean all 2>&1 | tee build.log
         shell: bash
 
+      # Upload final ROM if it exists
       - name: Upload ROM artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -75,3 +84,15 @@ jobs:
           path: |
             *.z64
             romfs.dfs
+
+      # Upload intermediate objects/logs for debugging
+      - name: Upload Debug Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shattered_realms-debug
+          path: |
+            src/*.o
+            *.elf
+            Makefile
+            build.log
