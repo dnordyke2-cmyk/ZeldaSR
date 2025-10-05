@@ -1,4 +1,4 @@
-name: Build ROM (Prebuilt Toolchain + Cache)
+name: Build ROM (using prebuilt toolchain artifact)
 
 on:
   push:
@@ -15,36 +15,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Restore cached toolchain/libdragon if present
-      - name: Cache toolchain and libdragon
-        id: cache-libdragon
-        uses: actions/cache@v4
+      # Download prebuilt toolchain artifact uploaded from build-toolchain.yml
+      - name: Download toolchain artifact
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            /home/runner/.local/libdragon/tools
-            /home/runner/.local/libdragon/include
-            /home/runner/.local/libdragon/lib
-          key: n64-prebuilt-v1-${{ runner.os }}
+          name: n64-toolchain-cache
+          path: /home/runner/.local/libdragon/tools
+
+      - name: Extract toolchain
+        shell: bash
+        run: |
+          mkdir -p /home/runner/.local/libdragon/tools
+          cd /home/runner/.local/libdragon/tools
+          tar -xzf mips64-elf-toolchain-cache.tar.gz
+          echo "${TOOLCHAIN_PATH}" >> $GITHUB_PATH
+          echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
 
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Download pre-built toolchain
-        run: |
-          mkdir -p /home/runner/.local/libdragon/tools/toolchain
-          cd /home/runner/.local/libdragon/tools/toolchain
-          echo "Fetching pre-built toolchain..."
-          wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-latest/mips64-elf-toolchain-linux.tar.gz
-          tar -xzf mips64-elf-toolchain-linux.tar.gz
-          echo "${TOOLCHAIN_PATH}" >> "$GITHUB_PATH"
-          echo "N64_INST=/home/runner/.local/libdragon" >> "$GITHUB_ENV"
-
-      - name: Build libdragon libraries (lightweight)
+      - name: Clone libdragon headers (no toolchain rebuild)
         shell: bash
         run: |
-          set -e
           if [ ! -d /home/runner/.local/libdragon/lib ]; then
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
             cd /home/runner/.local/libdragon
@@ -52,17 +46,6 @@ jobs:
             export PATH="${TOOLCHAIN_PATH}:$PATH"
             make install
           fi
-
-      # Save cache even if ROM fails to build
-      - name: Save cache (always)
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: |
-            /home/runner/.local/libdragon/tools
-            /home/runner/.local/libdragon/include
-            /home/runner/.local/libdragon/lib
-          key: n64-prebuilt-v1-${{ runner.os }}
 
       - name: Verify compiler
         shell: bash
