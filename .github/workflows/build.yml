@@ -1,4 +1,4 @@
-name: Build ROM (Home-cached Libdragon)
+name: Build ROM (Finalized Libdragon Path Fix)
 
 on:
   push:
@@ -10,7 +10,6 @@ jobs:
 
     env:
       N64_INST: /home/runner/.local/libdragon
-      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
 
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +22,7 @@ jobs:
             /home/runner/.local/libdragon/tools
             /home/runner/.local/libdragon/include
             /home/runner/.local/libdragon/lib
-          key: n64-homecache-v1-${{ runner.os }}
+          key: n64-finalcache-v2-${{ runner.os }}
 
       - name: Install prerequisites
         run: |
@@ -34,41 +33,32 @@ jobs:
         shell: bash
         run: |
           set -e
-          if [ ! -x "${TOOLCHAIN_PATH}/mips64-elf-gcc" ]; then
+          if ! find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" -print -quit | grep -q .; then
             mkdir -p /home/runner/.local
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
             cd /home/runner/.local/libdragon/tools
             export N64_INST=/home/runner/.local/libdragon
-            ./build-toolchain.sh
+            ./build-toolchain.sh || true
             cd /home/runner/.local/libdragon
-            make install
+            make install || true
           fi
-          echo "${TOOLCHAIN_PATH}" >> "$GITHUB_PATH"
-          echo "N64_INST=/home/runner/.local/libdragon" >> "$GITHUB_ENV"
 
-      - name: Save cache even if build fails
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: |
-            /home/runner/.local/libdragon/tools
-            /home/runner/.local/libdragon/include
-            /home/runner/.local/libdragon/lib
-          key: n64-homecache-v1-${{ runner.os }}
-
-      - name: Verify compiler
+      - name: Locate built toolchain
         shell: bash
         run: |
-          echo "PATH=$PATH"
-          find /home/runner/.local/libdragon/tools -maxdepth 4 -type f -name "mips64-elf-gcc"
+          echo "Searching recursively for compiler binaries..."
+          find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" || true
 
       - name: Build ROM
         shell: bash
         run: |
           set -e
-          export PATH="${TOOLCHAIN_PATH}:$PATH"
+          # Look up compiler directory dynamically
+          COMP_PATH=$(find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
+          echo "Detected compiler path: ${COMP_PATH}"
+          export PATH="${COMP_PATH}:$PATH"
           export N64_INST=/home/runner/.local/libdragon
-          command -v mips64-elf-gcc
+          command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
           make clean all 2>&1 | tee build.log
 
       - name: Upload ROM artifact
