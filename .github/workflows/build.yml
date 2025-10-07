@@ -1,4 +1,4 @@
-name: Build Toolchain and ROM (cached)
+name: Build Shattered Realms ROM (prebuilt toolchain from release)
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-toolchain-and-rom:
+  build:
     runs-on: ubuntu-latest
 
     env:
@@ -14,51 +14,42 @@ jobs:
       TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
 
     steps:
+      # 1. Checkout project source
       - uses: actions/checkout@v4
 
-      - name: Restore cached toolchain
-        id: cache-toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            /home/runner/.local/libdragon/tools
-            /home/runner/.local/libdragon/include
-            /home/runner/.local/libdragon/lib
-          key: n64-libdragon-cache-v3-${{ runner.os }}
-
+      # 2. Install basic build dependencies
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Build toolchain if missing
-        if: steps.cache-toolchain.outputs.cache-hit != 'true'
-        shell: bash
+      # 3. Download prebuilt toolchain from your release link
+      - name: Download prebuilt toolchain from release
         run: |
-          echo "Toolchain not found in cache; building..."
-          mkdir -p /home/runner/.local/libdragon
+          mkdir -p /home/runner/.local/libdragon/tools/toolchain
+          cd /home/runner/.local/libdragon/tools/toolchain
+          echo "Fetching prebuilt toolchain from release..."
+          wget -q https://github.com/user-attachments/files/22749603/gcc-toolchain-mips64-latest.tar.gz
+          tar -xzf gcc-toolchain-mips64-latest.tar.gz
+          echo "/home/runner/.local/libdragon/tools/toolchain/bin" >> $GITHUB_PATH
+          echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
+
+      # 4. Download and install libdragon headers and libs (small build)
+      - name: Prepare libdragon environment
+        run: |
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
-          cd /home/runner/.local/libdragon/tools
-          export N64_INST=/home/runner/.local/libdragon
-          ./build-toolchain.sh
           cd /home/runner/.local/libdragon
+          export N64_INST=/home/runner/.local/libdragon
+          export PATH="${TOOLCHAIN_PATH}:$PATH"
           make install
 
-      - name: Save toolchain to cache
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: |
-            /home/runner/.local/libdragon/tools
-            /home/runner/.local/libdragon/include
-            /home/runner/.local/libdragon/lib
-          key: n64-libdragon-cache-v3-${{ runner.os }}
-
+      # 5. Verify compiler and paths
       - name: Verify compiler
         run: |
-          echo "Verifying compiler..."
-          find /home/runner/.local/libdragon/tools -type f -name "mips64-elf-gcc" || true
+          echo "PATH=$PATH"
+          command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
 
+      # 6. Build the ROM using your Makefile
       - name: Build ROM
         shell: bash
         run: |
@@ -71,6 +62,7 @@ jobs:
           ls -l
           make clean all 2>&1 | tee build.log
 
+      # 7. Upload artifacts (ROM + debug info)
       - name: Upload ROM artifact
         if: always()
         uses: actions/upload-artifact@v4
