@@ -41,6 +41,11 @@ jobs:
             rm -rf /home/runner/.local/libdragon
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
             cd /home/runner/.local/libdragon
+
+            # Create symlink to make the toolchain visible at expected path
+            mkdir -p /home/runner/.local/libdragon/bin
+            ln -s /home/runner/.local/libdragon/tools/toolchain/bin/* /home/runner/.local/libdragon/bin/ || true
+
             export N64_INST=/home/runner/.local/libdragon
             export PATH="${TOOLCHAIN_PATH}:$PATH"
             make install
