@@ -30,10 +30,15 @@ jobs:
           tar -xzf gcc-toolchain-mips64-latest.tar.gz
           echo "$TOOLCHAIN_PATH" >> $GITHUB_PATH
           echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
+          echo "Toolchain directory layout:"
+          find /home/runner/.local/toolchain -maxdepth 4 -type f -name "mips64-elf-gcc" | sed 's/^/  /'
 
       - name: Prepare libdragon environment
         run: |
-          export PATH="$TOOLCHAIN_PATH:$PATH"
+          # Probe for compiler location dynamically
+          COMP_PATH=$(find /home/runner/.local/toolchain -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
+          echo "Detected compiler path: $COMP_PATH"
+          export PATH="$COMP_PATH:$PATH"
           export N64_INST=/home/runner/.local/libdragon
 
           if [ -f /home/runner/.local/libdragon/include/n64.h ]; then
@@ -43,10 +48,7 @@ jobs:
             rm -rf /home/runner/.local/libdragon
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
             cd /home/runner/.local/libdragon
-
-            # verify compiler path before install
-            echo "Compiler path check:"
-            which mips64-elf-gcc || (echo "Compiler not found!" && exit 1)
+            which mips64-elf-gcc || (echo "Compiler still missing!" && exit 1)
             make install
           fi
 
@@ -61,7 +63,8 @@ jobs:
           set -e
           echo "Building Shattered Realms ROM..."
           cd $GITHUB_WORKSPACE
-          export PATH="$TOOLCHAIN_PATH:$PATH"
+          COMP_PATH=$(find /home/runner/.local/toolchain -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
+          export PATH="$COMP_PATH:$PATH"
           export N64_INST=/home/runner/.local/libdragon
           which mips64-elf-gcc
           ls -R | head -50
