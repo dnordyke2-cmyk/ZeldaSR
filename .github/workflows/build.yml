@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      TOOLCHAIN_PATH: /home/runner/.local/toolchain/bin
       N64_INST: /home/runner/.local/libdragon
-      TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
 
     steps:
       - uses: actions/checkout@v4
@@ -23,33 +23,30 @@ jobs:
 
       - name: Download prebuilt toolchain from release
         run: |
-          mkdir -p /home/runner/.local/libdragon/tools/toolchain
-          cd /home/runner/.local/libdragon/tools/toolchain
+          mkdir -p /home/runner/.local/toolchain
+          cd /home/runner/.local/toolchain
           echo "Fetching prebuilt toolchain from release..."
           wget -q https://github.com/user-attachments/files/22749603/gcc-toolchain-mips64-latest.tar.gz
           tar -xzf gcc-toolchain-mips64-latest.tar.gz
-          echo "/home/runner/.local/libdragon/tools/toolchain/bin" >> $GITHUB_PATH
+          echo "$TOOLCHAIN_PATH" >> $GITHUB_PATH
           echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
 
       - name: Prepare libdragon environment
         run: |
-          # Ensure toolchain is visible before any build
-          export PATH="/home/runner/.local/libdragon/tools/toolchain/bin:$PATH"
+          export PATH="$TOOLCHAIN_PATH:$PATH"
           export N64_INST=/home/runner/.local/libdragon
 
-          # Symlink for libdragon's expected structure
-          mkdir -p /home/runner/.local/libdragon/bin
-          ln -sf /home/runner/.local/libdragon/tools/toolchain/bin/* /home/runner/.local/libdragon/bin/ || true
-
           if [ -f /home/runner/.local/libdragon/include/n64.h ]; then
-            echo "Prebuilt libdragon environment detected; skipping install."
+            echo "Prebuilt libdragon detected; skipping install."
           else
-            echo "libdragon sources not found; cloning repository and installing..."
+            echo "Installing fresh libdragon..."
             rm -rf /home/runner/.local/libdragon
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
             cd /home/runner/.local/libdragon
-            # confirm compiler path before building
-            which mips64-elf-gcc || (echo "Compiler missing before install!" && exit 1)
+
+            # verify compiler path before install
+            echo "Compiler path check:"
+            which mips64-elf-gcc || (echo "Compiler not found!" && exit 1)
             make install
           fi
 
@@ -64,12 +61,10 @@ jobs:
           set -e
           echo "Building Shattered Realms ROM..."
           cd $GITHUB_WORKSPACE
-          export PATH="/home/runner/.local/libdragon/tools/toolchain/bin:$PATH"
+          export PATH="$TOOLCHAIN_PATH:$PATH"
           export N64_INST=/home/runner/.local/libdragon
-          which mips64-elf-gcc || echo "gcc not in PATH"
-          echo "Listing repository structure (first 50 lines):"
+          which mips64-elf-gcc
           ls -R | head -50
-          echo "Starting make build..."
           make clean all 2>&1 | tee build.log
           echo "Build complete."
 
