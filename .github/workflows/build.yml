@@ -14,16 +14,13 @@ jobs:
       TOOLCHAIN_PATH: /home/runner/.local/libdragon/tools/toolchain/bin
 
     steps:
-      # 1. Checkout project source
       - uses: actions/checkout@v4
 
-      # 2. Install basic build dependencies
       - name: Install prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      # 3. Download prebuilt toolchain from your release link
       - name: Download prebuilt toolchain from release
         run: |
           mkdir -p /home/runner/.local/libdragon/tools/toolchain
@@ -34,28 +31,25 @@ jobs:
           echo "/home/runner/.local/libdragon/tools/toolchain/bin" >> $GITHUB_PATH
           echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
 
-      # 4. Prepare libdragon environment (reuse existing folder if present)
       - name: Prepare libdragon environment
         run: |
-          # Reuse the libdragon folder if it already exists
-          if [ ! -d /home/runner/.local/libdragon/.git ]; then
+          # If directory exists, skip cloning entirely
+          if [ -d /home/runner/.local/libdragon ]; then
+            echo "libdragon directory already exists; skipping clone."
+          else
             echo "libdragon not found; cloning repository..."
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
-          else
-            echo "libdragon already present; skipping clone."
           fi
           cd /home/runner/.local/libdragon
           export N64_INST=/home/runner/.local/libdragon
           export PATH="${TOOLCHAIN_PATH}:$PATH"
           make install
 
-      # 5. Verify compiler and paths
       - name: Verify compiler
         run: |
           echo "PATH=$PATH"
           command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
 
-      # 6. Build the ROM using your Makefile
       - name: Build ROM
         shell: bash
         run: |
@@ -68,7 +62,6 @@ jobs:
           ls -l
           make clean all 2>&1 | tee build.log
 
-      # 7. Upload artifacts (ROM + debug info)
       - name: Upload ROM artifact
         if: always()
         uses: actions/upload-artifact@v4
