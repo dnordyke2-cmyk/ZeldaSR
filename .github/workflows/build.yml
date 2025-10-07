@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TOOLCHAIN_PATH: /home/runner/.local/toolchain/bin
+      TOOLCHAIN_ROOT: /home/runner/.local/toolchain
       N64_INST: /home/runner/.local/libdragon
 
     steps:
@@ -19,25 +19,31 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex tree
 
       - name: Download prebuilt toolchain from release
         run: |
-          mkdir -p /home/runner/.local/toolchain
-          cd /home/runner/.local/toolchain
+          mkdir -p "$TOOLCHAIN_ROOT"
+          cd "$TOOLCHAIN_ROOT"
           echo "Fetching prebuilt toolchain from release..."
           wget -q https://github.com/user-attachments/files/22749603/gcc-toolchain-mips64-latest.tar.gz
           tar -xzf gcc-toolchain-mips64-latest.tar.gz
-          echo "$TOOLCHAIN_PATH" >> $GITHUB_PATH
-          echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
-          echo "Toolchain directory layout:"
-          find /home/runner/.local/toolchain -maxdepth 4 -type f -name "mips64-elf-gcc" | sed 's/^/  /'
+          echo "Extracted toolchain directory layout:"
+          tree -L 4 "$TOOLCHAIN_ROOT" || find "$TOOLCHAIN_ROOT" -maxdepth 4 -type d
+
+      - name: Detect compiler path
+        id: detect
+        run: |
+          COMP_PATH=$(find /home/runner/.local/toolchain -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
+          echo "Detected compiler path: $COMP_PATH"
+          echo "COMP_PATH=$COMP_PATH" >> $GITHUB_ENV
+          if [ -z "$COMP_PATH" ]; then
+            echo "No compiler found — check archive contents above."
+            exit 1
+          fi
 
       - name: Prepare libdragon environment
         run: |
-          # Probe for compiler location dynamically
-          COMP_PATH=$(find /home/runner/.local/toolchain -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
-          echo "Detected compiler path: $COMP_PATH"
           export PATH="$COMP_PATH:$PATH"
           export N64_INST=/home/runner/.local/libdragon
 
@@ -63,7 +69,6 @@ jobs:
           set -e
           echo "Building Shattered Realms ROM..."
           cd $GITHUB_WORKSPACE
-          COMP_PATH=$(find /home/runner/.local/toolchain -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
           export PATH="$COMP_PATH:$PATH"
           export N64_INST=/home/runner/.local/libdragon
           which mips64-elf-gcc
