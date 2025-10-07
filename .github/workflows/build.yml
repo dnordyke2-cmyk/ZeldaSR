@@ -25,11 +25,12 @@ jobs:
         run: |
           mkdir -p "$TOOLCHAIN_ROOT"
           cd "$TOOLCHAIN_ROOT"
-          echo "Fetching prebuilt toolchain from release..."
-          wget -q https://github.com/user-attachments/files/22749603/gcc-toolchain-mips64-latest.tar.gz
-          tar -xzf gcc-toolchain-mips64-latest.tar.gz
-          echo "Extracted toolchain directory layout:"
-          tree -L 4 "$TOOLCHAIN_ROOT" || find "$TOOLCHAIN_ROOT" -maxdepth 4 -type d
+          echo "Fetching official prebuilt toolchain..."
+          wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-latest/mips64-elf-toolchain-linux.tar.gz
+          tar -xzf mips64-elf-toolchain-linux.tar.gz
+          echo "Toolchain extracted:"
+          ls -l bin | head -10
+
 
       - name: Detect compiler path
         id: detect
