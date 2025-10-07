@@ -34,10 +34,16 @@ jobs:
           echo "/home/runner/.local/libdragon/tools/toolchain/bin" >> $GITHUB_PATH
           echo "N64_INST=/home/runner/.local/libdragon" >> $GITHUB_ENV
 
-      # 4. Download and install libdragon headers and libs (small build)
+      # 4. Prepare libdragon environment (reuse existing folder if present)
       - name: Prepare libdragon environment
         run: |
-          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
+          # Reuse the libdragon folder if it already exists
+          if [ ! -d /home/runner/.local/libdragon/.git ]; then
+            echo "libdragon not found; cloning repository..."
+            git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
+          else
+            echo "libdragon already present; skipping clone."
+          fi
           cd /home/runner/.local/libdragon
           export N64_INST=/home/runner/.local/libdragon
           export PATH="${TOOLCHAIN_PATH}:$PATH"
