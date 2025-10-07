@@ -33,21 +33,23 @@ jobs:
 
       - name: Prepare libdragon environment
         run: |
-          # If directory exists, assume preinstalled libdragon, otherwise clone and install
-          if [ -d /home/runner/.local/libdragon/include/n64.h ]; then
+          # Ensure toolchain is visible before any build
+          export PATH="/home/runner/.local/libdragon/tools/toolchain/bin:$PATH"
+          export N64_INST=/home/runner/.local/libdragon
+
+          # Symlink for libdragon's expected structure
+          mkdir -p /home/runner/.local/libdragon/bin
+          ln -sf /home/runner/.local/libdragon/tools/toolchain/bin/* /home/runner/.local/libdragon/bin/ || true
+
+          if [ -f /home/runner/.local/libdragon/include/n64.h ]; then
             echo "Prebuilt libdragon environment detected; skipping install."
           else
             echo "libdragon sources not found; cloning repository and installing..."
             rm -rf /home/runner/.local/libdragon
             git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
             cd /home/runner/.local/libdragon
-
-            # Create symlink to make the toolchain visible at expected path
-            mkdir -p /home/runner/.local/libdragon/bin
-            ln -s /home/runner/.local/libdragon/tools/toolchain/bin/* /home/runner/.local/libdragon/bin/ || true
-
-            export N64_INST=/home/runner/.local/libdragon
-            export PATH="${TOOLCHAIN_PATH}:$PATH"
+            # confirm compiler path before building
+            which mips64-elf-gcc || (echo "Compiler missing before install!" && exit 1)
             make install
           fi
 
