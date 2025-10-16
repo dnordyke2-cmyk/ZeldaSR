@@ -1,25 +1,35 @@
 #include <libdragon.h>
 #include "hud.h"
 
-int main(void) {
-    // Init display + console + RDP
-    display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_OFF);
-    rdpq_init();
-    console_init();
+/*
+ * Minimal boot loop for current libdragon (rdpq_attach takes 2 params).
+ * We attach the color framebuffer and pass NULL for the Z-buffer since
+ * the early alpha doesn't need depth yet.
+ */
 
-    hud_init();
+int main(void) {
+    /* Video + RDPQ init (double-buffer, 320x240, 16bpp) */
+    display_init( RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_RESAMPLE );
+    rdpq_init();
+
+    /* Optional: copy mode is fine for simple 2D/HUD */
+    rdpq_set_mode_copy(false);
 
     while (1) {
-        surface_t *disp = display_get();
-        rdpq_attach(disp);
+        surface_t *fb = display_get();
 
-        // Background
-        rdpq_clear(RGBA32(32,32,32,255));
+        /* Attach framebuffer; no Z-buffer for now */
+        rdpq_attach(fb, NULL);
 
-        // HUD overlay
+        /* Clear the screen (black) */
+        rdpq_clear(RGBA32(0,0,0,255));
+
+        /* Draw HUD (update to your actual HUD draw if needed) */
         hud_draw();
 
+        /* Present */
         rdpq_detach_show();
     }
+
     return 0;
 }
