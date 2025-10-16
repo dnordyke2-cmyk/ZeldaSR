@@ -1,4 +1,4 @@
-name: Build Shattered Realms ROM (prebuilt toolchain from release)
+name: Build Shattered Realms ROM (prebuilt toolchain)
 
 on:
   push:
@@ -10,73 +10,74 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      # Keep toolchain separate from libdragon to avoid accidental deletion
       TOOLCHAIN_ROOT: /home/runner/.local/toolchain
-      N64_INST: /home/runner/.local/libdragon
+      TOOLCHAIN_BIN:  /home/runner/.local/toolchain/bin
+      N64_INST:       /home/runner/.local/libdragon
 
     steps:
+      # 1) Checkout repo
       - uses: actions/checkout@v4
 
+      # 2) Base deps
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex tree
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
 
-      - name: Download prebuilt toolchain from release
+      # 3) Download the OFFICIAL prebuilt toolchain (has mips64-elf-gcc binaries)
+      - name: Download prebuilt toolchain from libdragon release
         run: |
+          set -e
           mkdir -p "$TOOLCHAIN_ROOT"
           cd "$TOOLCHAIN_ROOT"
           echo "Fetching official prebuilt toolchain..."
           wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-latest/mips64-elf-toolchain-linux.tar.gz
           tar -xzf mips64-elf-toolchain-linux.tar.gz
-          echo "Toolchain extracted:"
-          ls -l bin | head -10
+          # Export PATH for later steps
+          echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
 
-
-      - name: Detect compiler path
-        id: detect
-        run: |
-          COMP_PATH=$(find /home/runner/.local/toolchain -type f -name "mips64-elf-gcc" -printf '%h\n' | head -n1)
-          echo "Detected compiler path: $COMP_PATH"
-          echo "COMP_PATH=$COMP_PATH" >> $GITHUB_ENV
-          if [ -z "$COMP_PATH" ]; then
-            echo "No compiler found — check archive contents above."
-            exit 1
-          fi
-
+      # 4) Prepare libdragon include/lib (skip install if already present)
       - name: Prepare libdragon environment
         run: |
-          export PATH="$COMP_PATH:$PATH"
-          export N64_INST=/home/runner/.local/libdragon
+          set -e
+          export PATH="$TOOLCHAIN_BIN:$PATH"
+          export N64_INST="$N64_INST"
 
-          if [ -f /home/runner/.local/libdragon/include/n64.h ]; then
+          if [ -f "$N64_INST/include/n64.h" ]; then
             echo "Prebuilt libdragon detected; skipping install."
           else
-            echo "Installing fresh libdragon..."
-            rm -rf /home/runner/.local/libdragon
-            git clone --depth=1 https://github.com/DragonMinded/libdragon.git /home/runner/.local/libdragon
-            cd /home/runner/.local/libdragon
-            which mips64-elf-gcc || (echo "Compiler still missing!" && exit 1)
+            echo "Installing libdragon headers/libs..."
+            rm -rf "$N64_INST"
+            git clone --depth=1 https://github.com/DragonMinded/libdragon.git "$N64_INST"
+            cd "$N64_INST"
+            which mips64-elf-gcc
             make install
           fi
 
+      # 5) Verify compiler availability
       - name: Verify compiler
         run: |
+          set -e
           echo "PATH=$PATH"
-          command -v mips64-elf-gcc || (echo "Compiler still not found!" && exit 1)
+          command -v mips64-elf-gcc
+          mips64-elf-gcc --version | head -1
 
+      # 6) Build ROM (Makefile in repo root)
       - name: Build ROM
         shell: bash
         run: |
           set -e
           echo "Building Shattered Realms ROM..."
-          cd $GITHUB_WORKSPACE
-          export PATH="$COMP_PATH:$PATH"
-          export N64_INST=/home/runner/.local/libdragon
-          which mips64-elf-gcc
+          cd "$GITHUB_WORKSPACE"
+          export PATH="$TOOLCHAIN_BIN:$PATH"
+          export N64_INST="$N64_INST"
+          echo "Repo listing (first 50 lines):"
           ls -R | head -50
           make clean all 2>&1 | tee build.log
           echo "Build complete."
 
+      # 7) Upload artifacts
       - name: Upload ROM artifact
         if: always()
         uses: actions/upload-artifact@v4
