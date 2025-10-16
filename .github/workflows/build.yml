@@ -1,4 +1,4 @@
-name: Build Shattered Realms ROM (prebuilt toolchain)
+name: Build Shattered Realms ROM (official toolchain .deb)
 
 on:
   push:
@@ -10,74 +10,66 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Keep toolchain separate from libdragon to avoid accidental deletion
-      TOOLCHAIN_ROOT: /home/runner/.local/toolchain
-      TOOLCHAIN_BIN:  /home/runner/.local/toolchain/bin
-      N64_INST:       /home/runner/.local/libdragon
+      # The .deb installs here and sets up headers/libs/tools
+      N64_INST: /opt/libdragon
 
     steps:
-      # 1) Checkout repo
       - uses: actions/checkout@v4
 
-      # 2) Base deps
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex dpkg
 
-      # 3) Download the OFFICIAL prebuilt toolchain (has mips64-elf-gcc binaries)
-      - name: Download prebuilt toolchain from libdragon release
+      # Install the official prebuilt toolchain (.deb)
+      # Note: this URL/filename comes from the libdragon wiki "Option 2" instructions
+      - name: Install libdragon toolchain (.deb)
         run: |
           set -e
-          mkdir -p "$TOOLCHAIN_ROOT"
-          cd "$TOOLCHAIN_ROOT"
-          echo "Fetching official prebuilt toolchain..."
-          wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-latest/mips64-elf-toolchain-linux.tar.gz
-          tar -xzf mips64-elf-toolchain-linux.tar.gz
-          # Export PATH for later steps
-          echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
+          cd /tmp
+          echo "Fetching official libdragon toolchain (.deb)..."
+          wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-continuous-prerelease/gcc-toolchain-mips64-x86_64.deb
+          sudo dpkg -i gcc-toolchain-mips64-x86_64.deb
+          # dpkg installs toolchain under /opt/libdragon and sets env via profile.d on real machines.
+          # In CI we export the env directly:
+          echo "N64_INST=/opt/libdragon" >> "$GITHUB_ENV"
+          echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
 
-      # 4) Prepare libdragon include/lib (skip install if already present)
-      - name: Prepare libdragon environment
+      - name: Build & install libdragon (headers/libs/tools)
         run: |
           set -e
-          export PATH="$TOOLCHAIN_BIN:$PATH"
-          export N64_INST="$N64_INST"
-
-          if [ -f "$N64_INST/include/n64.h" ]; then
-            echo "Prebuilt libdragon detected; skipping install."
+          export N64_INST=/opt/libdragon
+          export PATH=/opt/libdragon/bin:$PATH
+          if [ -f "/opt/libdragon/include/n64.h" ]; then
+            echo "libdragon already installed; skipping build.sh"
           else
-            echo "Installing libdragon headers/libs..."
-            rm -rf "$N64_INST"
-            git clone --depth=1 https://github.com/DragonMinded/libdragon.git "$N64_INST"
-            cd "$N64_INST"
+            echo "Cloning and installing libdragon..."
+            git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon-src
+            cd /tmp/libdragon-src
             which mips64-elf-gcc
-            make install
+            ./build.sh   # this installs libdragon to $N64_INST
           fi
 
-      # 5) Verify compiler availability
-      - name: Verify compiler
+      - name: Verify compiler & tools
         run: |
           set -e
-          echo "PATH=$PATH"
+          export PATH=/opt/libdragon/bin:$PATH
           command -v mips64-elf-gcc
           mips64-elf-gcc --version | head -1
+          command -v n64tool
+          command -v mkdfs
 
-      # 6) Build ROM (Makefile in repo root)
       - name: Build ROM
         shell: bash
         run: |
           set -e
-          echo "Building Shattered Realms ROM..."
-          cd "$GITHUB_WORKSPACE"
-          export PATH="$TOOLCHAIN_BIN:$PATH"
-          export N64_INST="$N64_INST"
+          export N64_INST=/opt/libdragon
+          export PATH=/opt/libdragon/bin:$PATH
           echo "Repo listing (first 50 lines):"
           ls -R | head -50
           make clean all 2>&1 | tee build.log
           echo "Build complete."
 
-      # 7) Upload artifacts
       - name: Upload ROM artifact
         if: always()
         uses: actions/upload-artifact@v4
