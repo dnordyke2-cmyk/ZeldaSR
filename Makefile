@@ -11,17 +11,15 @@ CC         := $(N64_PREFIX)gcc
 N64_INST   ?= /opt/libdragon
 LIBDRAGON  := $(N64_INST)
 
-# NOTE: With the .deb toolchain, headers/libs are under mips64-elf/{include,lib}
+# With the .deb, headers/libs live under mips64-elf/{include,lib}
 INCLUDES   := -I$(LIBDRAGON)/mips64-elf/include
 LIBDIR     := $(LIBDRAGON)/mips64-elf/lib
 
-# ---- IMPORTANT LINK ORDER ----
-# libdragon decoders reference C/POSIX symbols (memset, malloc, read, lseek, memalign, etc).
-# Those live in newlib (libc) and the libdragon syscall shim (libdragonsys).
-# Put dependent libraries *after* objects, and put shim LAST so unresolved syscalls get satisfied.
+# ---- Link order matters ----
+# libc provides memset/malloc/etc, libdragonsys provides syscalls like read/lseek.
 LIBS       := -L$(LIBDIR) -ldragon -lc -lm -ldragonsys
 
-# Project sources (adjust to match repo)
+# Project sources (adjust as needed)
 SRCS       := src/main.c src/hud.c src/dungeon.c src/combat.c src/audio.c
 OBJS       := $(SRCS:.c=.o)
 
@@ -43,9 +41,13 @@ $(TARGET_ELF): $(OBJS)
 
 $(TARGET_ROM): $(TARGET_ELF)
 	@echo "  [ROM] $@"
-	# Build ROM filesystem (must exist, keep a .keep file in git)
+	# Ensure ROMFS exists and is not empty (mkdfs fails on empty)
+	@mkdir -p $(ROMFS)
+	@if ! find $(ROMFS) -type f -not -name '.*' -mindepth 1 -print -quit | grep -q . ; then \
+		echo "ROMFS is empty; creating placeholder readme.txt"; \
+		echo "Shattered Realms ROMFS placeholder" > $(ROMFS)/readme.txt; \
+	fi
 	mkdfs $(ROMFS) romfs.dfs
-	# Use libdragon's standard header under mips64-elf/lib
 	n64tool -l 2M -t "Shattered Realms" -h $(LIBDIR)/header -o $@ $< -s 1M -B romfs.dfs
 	chksum64 $@
 
