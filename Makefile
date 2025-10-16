@@ -6,13 +6,13 @@
 N64_PREFIX := mips64-elf-
 CC         := $(N64_PREFIX)gcc
 
-# Environment paths (libdragon installed by workflow)
-N64_INST   ?= /home/runner/.local/libdragon
+# Environment paths (libdragon installed by workflow to /opt/libdragon)
+N64_INST   ?= /opt/libdragon
 LIBDRAGON  := $(N64_INST)
 INCLUDES   := -I$(LIBDRAGON)/include
 LIBS       := -L$(LIBDRAGON)/lib -ldragon -lm
 
-# Project sources
+# Project sources (adjust to match your repo exactly)
 SRCS       := src/main.c src/hud.c src/dungeon.c src/combat.c src/audio.c
 OBJS       := $(SRCS:.c=.o)
 
