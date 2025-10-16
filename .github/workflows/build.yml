@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # The .deb installs here and sets up headers/libs/tools
       N64_INST: /opt/libdragon
 
     steps:
@@ -19,20 +18,18 @@ jobs:
       - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex dpkg
+          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex dpkg findutils
 
-      # Install the official prebuilt toolchain (.deb)
       - name: Install libdragon toolchain (.deb)
         run: |
           set -e
           cd /tmp
           echo "Fetching official libdragon toolchain (.deb)..."
           wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-continuous-prerelease/gcc-toolchain-mips64-x86_64.deb
-          sudo dpkg -i gcc-toolchain-mips64-x86_64.deb
+          sudo dpkg -i gcc-toolchain-mips64-x86_64.deb || sudo apt-get -f install -y
           echo "N64_INST=/opt/libdragon" >> "$GITHUB_ENV"
           echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
 
-      # Build & install libdragon headers/libs/tools if not already present
       - name: Build & install libdragon (headers/libs/tools)
         run: |
           set -e
@@ -48,28 +45,34 @@ jobs:
             ./build.sh   # installs to $N64_INST
           fi
 
-      # Ensure ROM header exists (some package layouts omit it). If missing, copy from libdragon repo.
+      # Robust header install: look for a >=4096-byte header/ipl3/bootcode/etc and install it.
       - name: Ensure N64 ROM header exists
         run: |
           set -e
           export N64_INST=/opt/libdragon
-          # Try common locations
-          if [ -f "/opt/libdragon/lib/header" ] || [ -f "/opt/libdragon/mips64-elf/lib/header" ]; then
+          # If already present at common locations, we're done.
+          if [ -f "/opt/libdragon/lib/header" ] || [ -f "/opt/libdragon/mips64-elf/lib/header" ] || [ -f "/opt/libdragon/share/libdragon/header" ]; then
             echo "Header already present."
             exit 0
           fi
-          echo "Header missing; fetching from libdragon repo..."
+          echo "Header missing; searching libdragon repo for a valid header..."
           rm -rf /tmp/libdragon-header
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon-header
-          # Standard location under the repo:
-          if [ -f /tmp/libdragon-header/tools/n64tool/header ]; then
+          # Find first plausible header >= 4096 bytes with common names
+          HEADER_CAND=$(find /tmp/libdragon-header \
+              -type f \( -iname 'header' -o -iname 'header.bin' -o -iname 'ipl3*' -o -iname 'pif*' -o -iname 'bootcode*' \) \
+              -size +4095c -print -quit || true)
+          if [ -n "$HEADER_CAND" ]; then
+            echo "Found header candidate: $HEADER_CAND"
             sudo mkdir -p /opt/libdragon/lib
-            sudo cp /tmp/libdragon-header/tools/n64tool/header /opt/libdragon/lib/header
-            echo "Installed header to /opt/libdragon/lib/header"
-          else
-            echo "ERROR: Could not locate header in libdragon repo." >&2
-            exit 1
+            sudo cp "$HEADER_CAND" /opt/libdragon/lib/header
+            # sanity check
+            sz=$(wc -c < /opt/libdragon/lib/header)
+            echo "Installed header to /opt/libdragon/lib/header (size: $sz bytes)"
+            exit 0
           fi
+          echo "ERROR: Could not locate a valid (>=4096B) N64 header in libdragon repo." >&2
+          exit 1
 
       - name: Verify toolchain & tools
         run: |
