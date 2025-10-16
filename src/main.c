@@ -2,7 +2,7 @@
 #include "hud.h"
 
 /* Minimal CPU-side render loop using graphics_* only (no RDPQ).
- * This avoids API churn and keeps the alpha build simple and stable.
+ * Uses RGBA32(...) for colors (RGB32 is not defined in current libdragon).
  */
 int main(void) {
     /* Initialize display: 320x240, 16bpp, double buffering */
@@ -14,8 +14,8 @@ int main(void) {
         /* Acquire framebuffer */
         surface_t *fb = display_get();
 
-        /* Clear screen to black */
-        graphics_fill_screen(fb, RGB32(0, 0, 0));
+        /* Clear screen to opaque black */
+        graphics_fill_screen(fb, RGBA32(0, 0, 0, 255));
 
         /* Draw HUD */
         hud_draw(fb);
