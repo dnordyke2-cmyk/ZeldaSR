@@ -7,23 +7,23 @@ static int s_hearts = 3;
 static int s_rupees = 0;
 
 void hud_init(void) {
-    /* Using the built-in 8x8 system font via graphics_*.
-     * No explicit font load needed for the basic text helpers. */
+    /* Using built-in system font with graphics_* API (no explicit load). */
 }
 
 void hud_draw(surface_t *fb) {
     char buf[64];
 
-    /* Set draw color: white text, transparent bg */
-    graphics_set_color(RGBA32(255,255,255,255), 0);
+    /* graphics_set_color expects a uint32_t matching the framebuffer format.
+     * For 16bpp (RGB555/565), 0xFFFF is white and 0x0000 is transparent/black.
+     * (Exact mapping depends on mode, but these work well for simple HUD text.)
+     */
+    graphics_set_color(0xFFFF, 0x0000);  /* white fg, transparent/black bg */
 
-    /* Example: hearts (HP) at top-left */
+    /* Hearts (HP) at top-left */
     snprintf(buf, sizeof(buf), "HP: %d", s_hearts);
     graphics_draw_text(fb, 8, 8, buf);
 
-    /* Example: rupees at top-right (simple right edge offset) */
+    /* Rupees at top-right (adjust X for your font/spacing as needed) */
     snprintf(buf, sizeof(buf), "R: %d", s_rupees);
     graphics_draw_text(fb, 280, 8, buf);
-
-    /* You can expand here with icons, meters, etc. */
 }
