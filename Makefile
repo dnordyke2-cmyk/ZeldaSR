@@ -11,25 +11,26 @@ CC         := $(N64_PREFIX)gcc
 N64_INST     ?= /opt/libdragon
 LIBDRAGON    := $(N64_INST)
 
-# NOTE:
-#  - The GCC target libs/ld script live under:      /opt/libdragon/mips64-elf/lib
-#  - The n64 ROM header lives under:                 /opt/libdragon/lib/header
+# Include/Lib paths for the .deb layout
 INCLUDES     := -I$(LIBDRAGON)/mips64-elf/include
 LIBDIR_LD    := $(LIBDRAGON)/mips64-elf/lib
-HEADER_DIR   := $(LIBDRAGON)/lib
+
+# Auto-detect the ROM header among common locations
+HEADER_CANDIDATES := $(LIBDRAGON)/lib/header $(LIBDRAGON)/mips64-elf/lib/header $(LIBDRAGON)/share/libdragon/header
+HEADER            := $(firstword $(wildcard $(HEADER_CANDIDATES)))
 
 # ---- Link order matters ----
 # libc provides memset/malloc/etc, libdragonsys provides syscalls like read/lseek.
-LIBS         := -L$(LIBDIR_LD) -ldragon -lc -lm -ldragonsys
+LIBS       := -L$(LIBDIR_LD) -ldragon -lc -lm -ldragonsys
 
-# Project sources (adjust as needed)
-SRCS         := src/main.c src/hud.c src/dungeon.c src/combat.c src/audio.c
-OBJS         := $(SRCS:.c=.o)
+# Project sources
+SRCS       := src/main.c src/hud.c src/dungeon.c src/combat.c src/audio.c
+OBJS       := $(SRCS:.c=.o)
 
 # Outputs
-TARGET_ELF   := shattered_realms.elf
-TARGET_ROM   := shattered_realms.z64
-ROMFS        := assets/romfs
+TARGET_ELF := shattered_realms.elf
+TARGET_ROM := shattered_realms.z64
+ROMFS      := assets/romfs
 
 # Flags
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections $(INCLUDES)
@@ -52,8 +53,17 @@ $(TARGET_ROM): $(TARGET_ELF)
 	fi
 	# mkdfs syntax: mkdfs <output.dfs> <input_dir>
 	mkdfs romfs.dfs $(ROMFS)
-	# Use libdragon's standard N64 header (under /opt/libdragon/lib)
-	n64tool -l 2M -t "Shattered Realms" -h $(HEADER_DIR)/header -o $@ $< -s 1M -B romfs.dfs
+	# Pick header path dynamically and validate
+	@if [ -z "$(HEADER)" ]; then \
+		echo "ERROR: Could not find N64 header at any of: $(HEADER_CANDIDATES)"; \
+		exit 1; \
+	fi
+	@HEADER_SIZE=$$(wc -c < "$(HEADER)"); \
+	if [ $$HEADER_SIZE -lt 4096 ]; then \
+		echo "ERROR: Header file '$(HEADER)' is too small ($$HEADER_SIZE bytes). Needs >= 4096."; \
+		exit 1; \
+	fi
+	n64tool -l 2M -t "Shattered Realms" -h $(HEADER) -o $@ $< -s 1M -B romfs.dfs
 	chksum64 $@
 
 %.o: %.c
