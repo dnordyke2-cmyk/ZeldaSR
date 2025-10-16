@@ -47,7 +47,9 @@ $(TARGET_ROM): $(TARGET_ELF)
 		echo "ROMFS is empty; creating placeholder readme.txt"; \
 		echo "Shattered Realms ROMFS placeholder" > $(ROMFS)/readme.txt; \
 	fi
-	mkdfs $(ROMFS) romfs.dfs
+	# mkdfs syntax is: mkdfs <output.dfs> <input_dir>
+	mkdfs romfs.dfs $(ROMFS)
+	# Use libdragon's standard header under mips64-elf/lib
 	n64tool -l 2M -t "Shattered Realms" -h $(LIBDIR)/header -o $@ $< -s 1M -B romfs.dfs
 	chksum64 $@
 
