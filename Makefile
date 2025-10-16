@@ -14,7 +14,12 @@ LIBDRAGON  := $(N64_INST)
 # NOTE: With the .deb toolchain, headers/libs are under mips64-elf/{include,lib}
 INCLUDES   := -I$(LIBDRAGON)/mips64-elf/include
 LIBDIR     := $(LIBDRAGON)/mips64-elf/lib
-LIBS       := -L$(LIBDIR) -ldragon -lm
+
+# ---- IMPORTANT LINK ORDER ----
+# libdragon decoders reference C/POSIX symbols (memset, malloc, read, lseek, memalign, etc).
+# Those live in newlib (libc) and the libdragon syscall shim (libdragonsys).
+# Put dependent libraries *after* objects, and put shim LAST so unresolved syscalls get satisfied.
+LIBS       := -L$(LIBDIR) -ldragon -lc -lm -ldragonsys
 
 # Project sources (adjust to match repo)
 SRCS       := src/main.c src/hud.c src/dungeon.c src/combat.c src/audio.c
@@ -27,7 +32,7 @@ ROMFS      := assets/romfs
 
 # Flags
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections $(INCLUDES)
-LDFLAGS := -T $(LIBDIR)/n64.ld $(LIBS)
+LDFLAGS := -T $(LIBDIR)/n64.ld $(LIBS) -Wl,--gc-sections
 
 # Default
 all: $(TARGET_ROM)
