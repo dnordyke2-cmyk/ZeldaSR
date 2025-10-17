@@ -2,12 +2,12 @@
 #include <stdio.h>
 
 /*
- * Shattered Realms — minimal engine bring-up (current libdragon trunk)
- * Initializes video + RDPQ, displays text overlay, and cycles colors with START.
+ * Zelda: Shattered Realms — engine bring-up (libdragon 2025)
+ * Initializes video + RDPQ, draws text, START cycles background color.
  */
 
 int main(void) {
-    // ---- Core subsystems ----
+    // ---- Core systems ----
     debug_init_isviewer();
     timer_init();
     dfs_init(DFS_DEFAULT_LOCATION);
@@ -25,13 +25,14 @@ int main(void) {
     // ---- Input ----
     joypad_init();
 
-    // ---- Text console ----
+    // ---- Console text overlay ----
     console_init();
     console_clear();
     printf("Zelda: Shattered Realms (alpha engine test)\n");
     printf("Build OK: framebuffer + input online.\n");
     printf("Press START to cycle background color.\n");
 
+    // ---- Background color table ----
     color_t BG_COLORS[] = {
         RGBA16(0, 0, 0, 1),     // black
         RGBA16(0, 0, 10, 1),    // blue
@@ -52,10 +53,9 @@ int main(void) {
 
         // ---- Render ----
         surface_t *disp = display_get();
-        rdpq_attach_clear(disp, NULL);           // attach + clear Z
-        rdpq_clear_color(BG_COLORS[bg_idx]);     // set clear color
-        rdpq_clear();                            // clear color buffer
-        rdpq_detach_show();                      // present frame
+        rdpq_attach_clear(disp, NULL);          // attach framebuffer
+        rdpq_clear(BG_COLORS[bg_idx]);          // clear to color
+        rdpq_detach_show();                     // present frame
 
         console_render();
         wait_ms(1);
