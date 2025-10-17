@@ -12,7 +12,6 @@ jobs:
 
     env:
       N64_INST: /opt/libdragon
-      # Keep a sane PATH; we'll append $N64_INST/bin for the build step
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
@@ -24,16 +23,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential curl git jq
 
-      - name: Install libdragon toolchain (.deb from latest toolchain release, arch-aware)
+      - name: Install libdragon toolchain (.deb, arch-aware)
         run: |
           set -e
-          ARCH=$(dpkg --print-architecture)  # e.g., amd64, arm64
+          ARCH=$(dpkg --print-architecture)  # amd64 on GitHub runners
           echo "Runner architecture: $ARCH"
-
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
           ASSETS_JSON=$(curl -fsSL "$API")
 
-          # Map dpkg arch -> asset pattern
           case "$ARCH" in
             amd64)  PATTERN='(x86_64|amd64)\.deb$' ;;
             arm64)  PATTERN='(aarch64|arm64)\.deb$' ;;
@@ -42,10 +39,8 @@ jobs:
 
           DEB_URL=$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" \
                     '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)
-
           if [ -z "$DEB_URL" ]; then
-            echo "Could not find a toolchain .deb matching pattern $PATTERN for arch=$ARCH" >&2
-            echo "Available assets:"
+            echo "No toolchain .deb matched $PATTERN for arch=$ARCH" >&2
             echo "$ASSETS_JSON" | jq -r '.assets[].name'
             exit 1
           fi
@@ -54,20 +49,38 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
-          echo "N64_INST is set to: ${N64_INST}"
+      - name: Locate toolchain binaries and export PATH
+        run: |
+          set -e
+          # Try common locations first
+          CANDIDATES="/opt/libdragon/bin /n64_toolchain/bin /usr/local/bin /usr/bin /opt /opt/n64-toolchain/bin"
+          TOOLBIN=""
+          for d in $CANDIDATES; do
+            if [ -x "$d/mips64-elf-gcc" ]; then TOOLBIN="$d"; break; fi
+          done
+          # Last-resort search (bounded to /opt and /usr to keep it quick)
+          if [ -z "$TOOLBIN" ]; then
+            TOOLBIN=$(find /opt /usr -type f -name mips64-elf-gcc 2>/dev/null | head -n1 | xargs -r dirname || true)
+          fi
+          if [ -z "$TOOLBIN" ]; then
+            echo "mips64-elf-gcc not found after install." >&2
+            exit 1
+          fi
+          echo "TOOLBIN=$TOOLBIN"
+          echo "TOOLBIN=$TOOLBIN" >> $GITHUB_ENV
+          echo "PATH=$TOOLBIN:$PATH" >> $GITHUB_ENV
 
       - name: Install libdragon SDK (headers, libs, tools)
         run: |
           set -e
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
           cd /tmp/libdragon
-          # Installs headers, libraries, tools (n64tool, mkdfs, chksum64) into $N64_INST
-          ./build.sh
+          ./build.sh  # installs into $N64_INST
 
       - name: Diagnose toolchain & SDK
         run: |
           set -e
-          echo "Probing tools and files..."
+          echo "Using TOOLBIN=$TOOLBIN"
           command -v mips64-elf-gcc || true
           command -v n64tool || true
           command -v mkdfs || true
@@ -79,7 +92,7 @@ jobs:
 
       - name: Build ROM
         env:
-          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$N64_INST/bin
+          PATH: ${{ env.TOOLBIN }}:${{ env.N64_INST }}/bin:${{ env.PATH }}
         run: |
           set -e
           echo "--- Makefile paths ---"
