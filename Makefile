@@ -62,8 +62,9 @@ $(TARGET_ROM): $(TARGET_ELF)
 		echo "ERROR: Header file '$(HEADER)' is too small ($$HEADER_SIZE bytes). Needs >= 4096."; \
 		exit 1; \
 	fi
-	# IMPORTANT: place all options *before* the ELF path.
-	n64tool -l 2M -t "Shattered Realms" -h "$(HEADER)" -o "$@" -s 1M -B romfs.dfs "$<"
+	# IMPORTANT: First file (ELF) cannot have an offset; add DFS afterward.
+	# Optional: align the DFS to 4 bytes for cleanliness.
+	n64tool -l 2M -t "Shattered Realms" -h "$(HEADER)" -o "$@" "$<" -a 4 romfs.dfs
 	chksum64 "$@"
 
 %.o: %.c
