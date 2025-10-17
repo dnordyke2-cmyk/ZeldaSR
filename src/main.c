@@ -2,65 +2,60 @@
 #include <stdio.h>
 
 /*
- * Zelda: Shattered Realms — framebuffer bring-up (no RDPQ)
- * - Initializes display (320x240, 16bpp, double-buffer)
- * - Uses graphics_* CPU renderer to draw text & fill background
- * - START cycles background colors to prove input + drawing
- *
- * This avoids RDPQ so it renders on the widest range of emulator cores.
+ * Zelda: Shattered Realms — framebuffer bring-up (stable libdragon SDK)
+ * Compatible with graphics_* API using uint32_t colors.
+ * Renders text + background color cycles using START button.
  */
 
 int main(void) {
-    // Core subsystems
+    // ---- Core subsystems ----
     debug_init_isviewer();
     timer_init();
     dfs_init(DFS_DEFAULT_LOCATION);
 
-    // Video: 320x240 @ 16bpp, double buffering
+    // ---- Video ----
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_RESAMPLE);
 
-    // Input (modern API)
-    joypad_init();
+    // ---- Input ----
+    controller_init();
 
-    // Init graphics 2D CPU rasterizer
+    // ---- Graphics ----
     graphics_init();
 
-    // Prepare a few simple colors
-    color_t BG_COLORS[] = {
-        RGBA16(0, 0, 0, 1),     // black
-        RGBA16(0, 0, 10, 1),    // blue
-        RGBA16(0, 10, 0, 1),    // green
-        RGBA16(10, 0, 0, 1),    // red
-        RGBA16(10,10,0, 1),     // yellow
+    // ---- Background colors (uint32_t, 0xRRGGBB) ----
+    uint32_t BG_COLORS[] = {
+        graphics_make_color(0, 0, 0, 255),       // black
+        graphics_make_color(0, 0, 128, 255),     // blue
+        graphics_make_color(0, 128, 0, 255),     // green
+        graphics_make_color(128, 0, 0, 255),     // red
+        graphics_make_color(255, 255, 0, 255),   // yellow
     };
-    const int BG_COUNT = sizeof(BG_COLORS)/sizeof(BG_COLORS[0]);
+    const int BG_COUNT = sizeof(BG_COLORS) / sizeof(BG_COLORS[0]);
     int bg_idx = 0;
 
     while (1) {
-        // Input
-        joypad_poll();
-        joypad_buttons_t btn = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-        if (btn.start) {
+        // ---- Input ----
+        controller_scan();
+        struct controller_data keys = get_keys_down();
+        if (keys.c[0].start)
             bg_idx = (bg_idx + 1) % BG_COUNT;
-        }
 
-        // Acquire backbuffer
+        // ---- Draw frame ----
         surface_t *disp = display_get();
 
-        // Fill the whole screen background
+        // Fill screen background
         graphics_fill_screen(disp, BG_COLORS[bg_idx]);
 
-        // Draw a simple text overlay
-        // Set text color (fg) and background (bg) for subsequent text draws
-        graphics_set_color(RGBA16(31,31,31,1), RGBA16(0,0,0,1));  // white on black
-        graphics_draw_text(disp, 8, 8,   "Zelda: Shattered Realms (alpha engine test)");
-        graphics_draw_text(disp, 8, 24,  "Build OK: framebuffer + input online.");
-        graphics_draw_text(disp, 8, 40,  "Press START to cycle background color.");
+        // Set text colors (white on transparent)
+        graphics_set_color(graphics_make_color(255,255,255,255), 0);
+        graphics_draw_text(disp, 16, 16, "Zelda: Shattered Realms (alpha engine test)");
+        graphics_draw_text(disp, 16, 32, "Build OK: framebuffer + input online.");
+        graphics_draw_text(disp, 16, 48, "Press START to cycle background color.");
 
-        // Present
+        // Show frame
         display_show(disp);
 
-        // Tiny pace so emulators don't spin hot
+        // Limit loop speed slightly
         wait_ms(1);
     }
 
