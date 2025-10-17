@@ -20,7 +20,6 @@ HEADER_CANDIDATES := $(LIBDRAGON)/lib/header $(LIBDRAGON)/mips64-elf/lib/header 
 HEADER            := $(firstword $(wildcard $(HEADER_CANDIDATES)))
 
 # ---- Link order matters ----
-# libc provides memset/malloc/etc, libdragonsys provides syscalls like read/lseek.
 LIBS       := -L$(LIBDIR_LD) -ldragon -lc -lm -ldragonsys
 
 # Project sources
@@ -63,8 +62,9 @@ $(TARGET_ROM): $(TARGET_ELF)
 		echo "ERROR: Header file '$(HEADER)' is too small ($$HEADER_SIZE bytes). Needs >= 4096."; \
 		exit 1; \
 	fi
-	n64tool -l 2M -t "Shattered Realms" -h $(HEADER) -o $@ $< -s 1M -B romfs.dfs
-	chksum64 $@
+	# IMPORTANT: place all options *before* the ELF path.
+	n64tool -l 2M -t "Shattered Realms" -h "$(HEADER)" -o "$@" -s 1M -B romfs.dfs "$<"
+	chksum64 "$@"
 
 %.o: %.c
 	@echo "  [CC]  $<"
