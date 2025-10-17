@@ -12,7 +12,7 @@ jobs:
 
     env:
       N64_INST: /opt/libdragon
-      # Keep a sane PATH and add libdragon tools later
+      # Keep a sane PATH; we'll append $N64_INST/bin for the build step
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
@@ -24,22 +24,36 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential curl git jq
 
-      - name: Install libdragon toolchain (.deb from latest release)
+      - name: Install libdragon toolchain (.deb from latest toolchain release, arch-aware)
         run: |
           set -e
-          # Query latest toolchain release assets and pick the Linux .deb
+          ARCH=$(dpkg --print-architecture)  # e.g., amd64, arm64
+          echo "Runner architecture: $ARCH"
+
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          DEB_URL=$(curl -fsSL "$API" \
-            | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64.*\\.deb$")) | .browser_download_url' \
-            | head -n1)
+          ASSETS_JSON=$(curl -fsSL "$API")
+
+          # Map dpkg arch -> asset pattern
+          case "$ARCH" in
+            amd64)  PATTERN='(x86_64|amd64)\.deb$' ;;
+            arm64)  PATTERN='(aarch64|arm64)\.deb$' ;;
+            *)      echo "Unsupported arch: $ARCH"; echo "$ASSETS_JSON" | jq -r '.assets[].name'; exit 1 ;;
+          esac
+
+          DEB_URL=$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" \
+                    '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)
+
           if [ -z "$DEB_URL" ]; then
-            echo "Could not find gcc-toolchain .deb asset in latest toolchain release." >&2
+            echo "Could not find a toolchain .deb matching pattern $PATTERN for arch=$ARCH" >&2
+            echo "Available assets:"
+            echo "$ASSETS_JSON" | jq -r '.assets[].name'
             exit 1
           fi
+
           echo "Downloading toolchain: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
-          # The package sets N64_INST=/opt/libdragon (per docs). Open a new shell for good measure.
+
           echo "N64_INST is set to: ${N64_INST}"
 
       - name: Install libdragon SDK (headers, libs, tools)
@@ -47,7 +61,7 @@ jobs:
           set -e
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
           cd /tmp/libdragon
-          # This installs libdragon + tools (n64tool, mkdfs, chksum64) into $N64_INST
+          # Installs headers, libraries, tools (n64tool, mkdfs, chksum64) into $N64_INST
           ./build.sh
 
       - name: Diagnose toolchain & SDK
@@ -65,7 +79,6 @@ jobs:
 
       - name: Build ROM
         env:
-          # Append libdragon tools to PATH for n64tool/mkdfs/chksum64
           PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$N64_INST/bin
         run: |
           set -e
