@@ -12,6 +12,10 @@ jobs:
     container:
       image: ghcr.io/dragonminded/libdragon:latest
       options: --user root
+    env:
+      # Ensure a sane PATH inside the container (don't clobber it!)
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/libdragon/bin
+      N64_INST: /opt/libdragon
 
     steps:
       - name: Checkout repository
@@ -25,16 +29,12 @@ jobs:
           command -v n64tool || true
           command -v mkdfs || true
           command -v chksum64 || true
+          echo "PATH=$PATH"
           echo "Listing /opt/libdragon/bin:"
           ls -l /opt/libdragon/bin || true
-          echo "Env:"
-          echo "N64_INST=${N64_INST:-/opt/libdragon}"
 
       - name: Build
         shell: sh
-        env:
-          N64_INST: /opt/libdragon
-          PATH: /opt/libdragon/bin:${{ env.PATH }}
         run: |
           set -e
           echo "Repo structure:"
