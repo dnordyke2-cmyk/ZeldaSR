@@ -2,10 +2,8 @@
 #include <stdio.h>
 
 /*
- * Shattered Realms — minimal engine bring-up (modern libdragon)
- * - Initializes video, RDPQ, and joypad input
- * - Renders solid background color and on-screen text
- * - START cycles background colors
+ * Shattered Realms — minimal engine bring-up (current libdragon trunk)
+ * Initializes video + RDPQ, displays text overlay, and cycles colors with START.
  */
 
 int main(void) {
@@ -34,13 +32,12 @@ int main(void) {
     printf("Build OK: framebuffer + input online.\n");
     printf("Press START to cycle background color.\n");
 
-    // Background colors (color_t type)
     color_t BG_COLORS[] = {
         RGBA16(0, 0, 0, 1),     // black
-        RGBA16(0, 0, 10, 1),    // blue-ish
-        RGBA16(0, 10, 0, 1),    // green-ish
-        RGBA16(10, 0, 0, 1),    // red-ish
-        RGBA16(10,10,0, 1),     // yellow-ish
+        RGBA16(0, 0, 10, 1),    // blue
+        RGBA16(0, 10, 0, 1),    // green
+        RGBA16(10, 0, 0, 1),    // red
+        RGBA16(10,10,0, 1),     // yellow
     };
     const int BG_COUNT = sizeof(BG_COLORS) / sizeof(BG_COLORS[0]);
     int bg_idx = 0;
@@ -55,12 +52,12 @@ int main(void) {
 
         // ---- Render ----
         surface_t *disp = display_get();
-        rdpq_attach_clear(disp, NULL, BG_COLORS[bg_idx]); // clear with color
-        rdpq_detach_show();                               // present frame
+        rdpq_attach_clear(disp, NULL);           // attach + clear Z
+        rdpq_clear_color(BG_COLORS[bg_idx]);     // set clear color
+        rdpq_clear();                            // clear color buffer
+        rdpq_detach_show();                      // present frame
 
-        // Draw overlay text (console)
         console_render();
-
         wait_ms(1);
     }
 
