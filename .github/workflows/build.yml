@@ -1,4 +1,4 @@
-name: Build ROM
+name: Build ROM (libdragon container)
 
 on:
   push:
@@ -9,65 +9,39 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Use the official libdragon image so the toolchain is present
+    container:
+      image: ghcr.io/dragonminded/libdragon:latest
+      options: --user root
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set environment and PATH
-        run: |
-          echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
-          echo "/opt/libdragon/bin" >> $GITHUB_PATH
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl gcc
-
-      - name: Ensure chksum64 utility
+      - name: Verify toolchain in container
         run: |
           set -e
-          sudo mkdir -p /opt/libdragon/bin
-          if [ ! -x /opt/libdragon/bin/chksum64 ]; then
-            TMP_C=/tmp/chksum64.c
-            rm -f "$TMP_C"
+          which mips64-elf-gcc
+          which n64tool
+          which mkdfs
+          which chksum64
+          echo "N64_INST=${N64_INST:-/opt/libdragon}"
+          ls -l /opt/libdragon/bin
 
-            echo "Fetching chksum64.c from known sources..."
-            for URL in \
-              "https://raw.githubusercontent.com/DragonMinded/libdragon/trunk/tools/chksum64.c" \
-              "https://raw.githubusercontent.com/DragonMinded/libdragon/master/tools/chksum64.c" \
-              "https://raw.githubusercontent.com/DragonMinded/libdragon/main/tools/chksum64.c" \
-              "https://raw.githubusercontent.com/DragonMinded/libdragon/8c4e8505778a5c84e5477394eddfb127ce44d71b/tools/chksum64.c" \
-            ; do
-              echo "Trying $URL"
-              if curl -fsSL "$URL" -o "$TMP_C"; then
-                echo "Downloaded successfully from $URL"
-                break
-              fi
-            done
-
-            # Sanity check: ensure this is a real C source, not a 404 page
-            if grep -q "404" "$TMP_C" || ! grep -q "main" "$TMP_C"; then
-              echo "❌ Failed to fetch chksum64.c (404 or invalid content)."
-              echo "Skipping CRC fix; ROMs will still build but may warn in emulators."
-              exit 0
-            fi
-
-            echo "Compiling chksum64..."
-            gcc -O2 "$TMP_C" -o /opt/libdragon/bin/chksum64
-            chmod +x /opt/libdragon/bin/chksum64
-            /opt/libdragon/bin/chksum64 -h >/dev/null 2>&1 || echo "Built chksum64 successfully."
-          fi
-
-      - name: Build ROM
+      - name: Build
+        env:
+          N64_INST: /opt/libdragon
+          PATH: /opt/libdragon/bin:${PATH}
         run: |
           set -e
           echo "Repo structure:"
           ls -R | head -50
           make clean all 2>&1 | tee build.log
           echo "✅ Build complete."
+          echo "Built files:"
+          ls -l shattered_realms.* romfs.dfs || true
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: shattered_realms
