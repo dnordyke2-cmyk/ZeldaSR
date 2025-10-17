@@ -2,51 +2,66 @@
 #include <stdio.h>
 
 /*
- * Zelda: Shattered Realms — verified RDPQ console version (2025 SDK)
- * Displays text via console, cycles background color using START.
+ * Zelda: Shattered Realms — minimal visible boot (2025 libdragon)
+ * - Uses RDPQ and the built-in console overlay
+ * - START cycles the background color so you can verify input + rendering
+ *
+ * NOTE: display_init_console() is REQUIRED so console_render() actually shows up.
  */
 
 int main(void) {
-    // Core initialization
-    debug_init_isviewer();
+    // ---- Core subsystems ----
+    debug_init_isviewer();              // optional IS-Viewer logging (ignored by most emus)
     timer_init();
-    dfs_init(DFS_DEFAULT_LOCATION);
+    dfs_init(DFS_DEFAULT_LOCATION);     // mount ROM filesystem (romfs.dfs) if present
 
-    // Display + RDPQ setup
-    display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_RESAMPLE);
+    // ---- Video / RDPQ / Console ----
+    display_init(RESOLUTION_320x240,    // resolution
+                 DEPTH_16_BPP,          // color depth
+                 2,                     // double-buffer
+                 GAMMA_NONE,
+                 ANTIALIAS_RESAMPLE);
+
+    display_init_console();             // <-- crucial: attaches console overlay to the display
     rdpq_init();
+
+    // ---- Input ----
     joypad_init();
 
-    // Console setup
+    // ---- Console text ----
     console_init();
     console_clear();
     printf("Zelda: Shattered Realms (alpha engine test)\n");
     printf("Framebuffer + RDPQ + Input OK.\n");
     printf("Press START to cycle background color.\n");
 
-    // Background colors
+    // Start on a bright color so a visible frame appears immediately
     color_t BG_COLORS[] = {
-        RGBA16(0,0,0,1), RGBA16(0,0,10,1), RGBA16(0,10,0,1),
-        RGBA16(10,0,0,1), RGBA16(10,10,0,1),
+        RGBA16(0, 0, 0, 1),     // black
+        RGBA16(0, 0, 10, 1),    // blue
+        RGBA16(0, 10, 0, 1),    // green
+        RGBA16(10, 0, 0, 1),    // red
+        RGBA16(10,10,0, 1),     // yellow (bright)
     };
-    const int BG_COUNT = sizeof(BG_COLORS)/sizeof(BG_COLORS[0]);
-    int bg_idx = 0;
+    const int BG_COUNT = sizeof(BG_COLORS) / sizeof(BG_COLORS[0]);
+    int bg_idx = 4; // start on yellow so you see color immediately
 
-    // Main loop
     while (1) {
+        // ---- Input ----
         joypad_poll();
         joypad_buttons_t btn = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-        if (btn.start)
+        if (btn.start) {
             bg_idx = (bg_idx + 1) % BG_COUNT;
+        }
 
-        // Draw
-        surface_t *disp = display_get();
-        rdpq_attach_clear(disp, NULL);
-        rdpq_clear(BG_COLORS[bg_idx]);
-        console_render();     // overlays text on the frame
-        rdpq_detach_show();
+        // ---- Render one frame ----
+        surface_t *disp = display_get();      // acquire backbuffer
+        rdpq_attach_clear(disp, NULL);        // attach RDP to color buffer, clear Z
+        rdpq_clear(BG_COLORS[bg_idx]);        // clear color buffer to chosen color
+        console_render();                     // draw console text overlay
+        rdpq_detach_show();                   // present the frame
 
-        wait_ms(1);
+        wait_ms(1);                           // slight pacing
     }
 
     return 0;
