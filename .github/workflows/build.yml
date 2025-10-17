@@ -9,7 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Pin to a known-good libdragon image that includes n64tool/mkdfs/chksum64 and libs
     container:
       image: ghcr.io/dragonminded/libdragon:latest
       options: --user root
@@ -19,28 +18,27 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Show toolchain (non-fatal diagnostics)
-        shell: bash
+        shell: sh
         run: |
-          set +e
           echo "Probing tools (non-fatal if missing):"
-          which mips64-elf-gcc || true
-          which n64tool || true
-          which mkdfs || true
-          which chksum64 || true
+          command -v mips64-elf-gcc || true
+          command -v n64tool || true
+          command -v mkdfs || true
+          command -v chksum64 || true
           echo "Listing /opt/libdragon/bin:"
           ls -l /opt/libdragon/bin || true
           echo "Env:"
           echo "N64_INST=${N64_INST:-/opt/libdragon}"
 
       - name: Build
-        shell: bash
+        shell: sh
         env:
           N64_INST: /opt/libdragon
-          PATH: /opt/libdragon/bin:${PATH}
+          PATH: /opt/libdragon/bin:${{ env.PATH }}
         run: |
           set -e
           echo "Repo structure:"
-          ls -R | head -50
+          ls -R | head -50 || true
           make clean all 2>&1 | tee build.log
           echo "✅ Build complete."
           echo "Built files:"
