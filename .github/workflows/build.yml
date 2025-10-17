@@ -1,117 +1,47 @@
-name: Build Shattered Realms ROM (official toolchain .deb)
+name: Build ROM
 
 on:
   push:
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    env:
-      N64_INST: /opt/libdragon
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install prerequisites
+      - name: Prep toolchain path
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git wget python3 unzip texinfo bison flex dpkg findutils
+          echo "N64_INST=/opt/libdragon" >> $GITHUB_ENV
+          echo "/opt/libdragon/bin" >> $GITHUB_PATH
 
-      - name: Install libdragon toolchain (.deb)
-        run: |
-          set -e
-          cd /tmp
-          echo "Fetching official libdragon toolchain (.deb)..."
-          wget -q https://github.com/DragonMinded/libdragon/releases/download/toolchain-continuous-prerelease/gcc-toolchain-mips64-x86_64.deb
-          sudo dpkg -i gcc-toolchain-mips64-x86_64.deb || sudo apt-get -f install -y
-          echo "N64_INST=/opt/libdragon" >> "$GITHUB_ENV"
-          echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl gcc
 
-      - name: Build & install libdragon (headers/libs/tools)
+      - name: Ensure checksum tool
         run: |
-          set -e
-          export N64_INST=/opt/libdragon
-          export PATH=/opt/libdragon/bin:$PATH
-          if [ -f "/opt/libdragon/mips64-elf/include/libdragon.h" ]; then
-            echo "libdragon headers present."
-          else
-            echo "Cloning and installing libdragon..."
-            git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon-src
-            cd /tmp/libdragon-src
-            which mips64-elf-gcc
-            ./build.sh   # installs to $N64_INST
+          sudo mkdir -p /opt/libdragon/bin
+          # Build chksum64 if missing
+          if [ ! -x /opt/libdragon/bin/chksum64 ]; then
+            curl -sL https://raw.githubusercontent.com/DragonMinded/libdragon/trunk/tools/chksum64.c -o /tmp/chksum64.c
+            gcc -O2 /tmp/chksum64.c -o /opt/libdragon/bin/chksum64
           fi
 
-      # Robust header install: look for a >=4096-byte header/ipl3/bootcode/etc and install it.
-      - name: Ensure N64 ROM header exists
+      - name: Build
         run: |
           set -e
-          export N64_INST=/opt/libdragon
-          # If already present at common locations, we're done.
-          if [ -f "/opt/libdragon/lib/header" ] || [ -f "/opt/libdragon/mips64-elf/lib/header" ] || [ -f "/opt/libdragon/share/libdragon/header" ]; then
-            echo "Header already present."
-            exit 0
-          fi
-          echo "Header missing; searching libdragon repo for a valid header..."
-          rm -rf /tmp/libdragon-header
-          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon-header
-          # Find first plausible header >= 4096 bytes with common names
-          HEADER_CAND=$(find /tmp/libdragon-header \
-              -type f \( -iname 'header' -o -iname 'header.bin' -o -iname 'ipl3*' -o -iname 'pif*' -o -iname 'bootcode*' \) \
-              -size +4095c -print -quit || true)
-          if [ -n "$HEADER_CAND" ]; then
-            echo "Found header candidate: $HEADER_CAND"
-            sudo mkdir -p /opt/libdragon/lib
-            sudo cp "$HEADER_CAND" /opt/libdragon/lib/header
-            # sanity check
-            sz=$(wc -c < /opt/libdragon/lib/header)
-            echo "Installed header to /opt/libdragon/lib/header (size: $sz bytes)"
-            exit 0
-          fi
-          echo "ERROR: Could not locate a valid (>=4096B) N64 header in libdragon repo." >&2
-          exit 1
-
-      - name: Verify toolchain & tools
-        run: |
-          set -e
-          export PATH=/opt/libdragon/bin:$PATH
-          command -v mips64-elf-gcc
-          mips64-elf-gcc --version | head -1
-          command -v n64tool
-          command -v mkdfs
-          ls -l /opt/libdragon/lib || true
-          ls -l /opt/libdragon/mips64-elf/lib || true
-
-      - name: Build ROM
-        shell: bash
-        run: |
-          set -e
-          export N64_INST=/opt/libdragon
-          export PATH=/opt/libdragon/bin:$PATH
-          echo "Repo listing (first 50 lines):"
-          ls -R | head -50
-          make clean all 2>&1 | tee build.log
+          make clean all
           echo "Build complete."
 
       - name: Upload ROM artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: shattered_realms-rom
+          name: shattered_realms
           path: |
-            *.z64
+            shattered_realms.z64
+            shattered_realms.elf
             romfs.dfs
-
-      - name: Upload Debug Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: shattered_realms-debug
-          path: |
-            src/*.o
-            *.elf
-            Makefile
-            build.log
+          if-no-files-found: error
