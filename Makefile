@@ -1,7 +1,7 @@
 # ====== Libdragon / Toolchain roots ======
 N64_INST        ?= /opt/libdragon
 BIN             := $(N64_INST)/bin
-MIPS_PREFIX     := $(N64_INST)/bin/mips64-elf
+MIPS_PREFIX     := $(BIN)/mips64-elf
 
 CC              := $(MIPS_PREFIX)-gcc
 AR              := $(MIPS_PREFIX)-ar
@@ -30,7 +30,7 @@ LDFLAGS         := -T $(N64_INST)/mips64-elf/lib/n64.ld \
                    -Wl,--gc-sections
 
 # ====== Phony targets ======
-.PHONY: all clean distclean run
+.PHONY: all clean distclean run fixcrc
 
 all: $(ROM)
 
@@ -56,16 +56,31 @@ $(DFS): | $(ASSETS_DIR)
 
 $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
-	@# Optional sentinel so the dir exists in VCS
 	@touch $(ASSETS_DIR)/.keep
 
-# ====== ROM pack + checksum ======
+# ====== ROM pack + checksum (with graceful fallbacks) ======
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	@# IMPORTANT: First file (ELF) cannot have an offset; add DFS afterward.
+	@# The ELF must be first; no offsets on the first file.
 	$(BIN)/n64tool -l $(ROMSIZE) -t "$(TITLE)" -h "$(HEADER)" -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
-	@# Fix CRC so emulators/hardware are happy.
-	$(BIN)/chksum64 "$(ROM)" >/dev/null
+	@$(MAKE) -s fixcrc
+
+# Try several checksum tools if available; otherwise warn and continue.
+fixcrc:
+	@set -e; \
+	if [ -x "$(BIN)/chksum64" ]; then \
+		echo "  [CRC] chksum64"; \
+		"$(BIN)/chksum64" "$(ROM)" >/dev/null; \
+	elif command -v rn64crc >/dev/null 2>&1; then \
+		echo "  [CRC] rn64crc -u"; \
+		rn64crc -u "$(ROM)"; \
+	elif command -v n64crc >/dev/null 2>&1; then \
+		echo "  [CRC] n64crc"; \
+		n64crc "$(ROM)"; \
+	else \
+		echo "  [WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
+		echo "        ROM will often still boot in modern emulators, but some carts/emus expect a fixed CRC."; \
+	fi
 
 # ====== Utilities ======
 clean:
@@ -75,7 +90,6 @@ clean:
 distclean: clean
 	@echo "  [DISTCLEAN]"
 	@$(RM) -f $(ROM)
-	@# Keep assets but remove the placeholder if it was created
 	@$(RM) -f $(ASSETS_DIR)/readme.txt
 
 # (Optional) quick-run alias for your emulator of choice
