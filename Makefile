@@ -1,10 +1,4 @@
-# ====== Portable Libdragon toolchain detection ======
-# We assume either:
-#   A) /opt/libdragon/mips64-elf/{include,lib}     (official libdragon images)
-#   B) /n64_toolchain/mips64-elf/{include,lib}     (some toolchain-only images)
-# We detect both at build time.
-
-# Preferred install root (can override via env)
+# ====== Portable Libdragon detection ======
 N64_INST ?= /opt/libdragon
 
 # Resolve include, lib, and linker script dynamically
@@ -23,7 +17,11 @@ N64_LDSCRIPT := $(shell \
   elif [ -f "/n64_toolchain/mips64-elf/lib/n64.ld" ]; then echo "/n64_toolchain/mips64-elf/lib/n64.ld"; \
   else echo ""; fi)
 
-# Fail early with a helpful message if headers/libs are truly missing
+# Optional IPL3 header path (some images provide this; if absent, n64tool will use its default)
+HEADER_CAND := $(N64_INST)/lib/header
+HEADER_OPT  := $(shell [ -f "$(HEADER_CAND)" ] && echo "-h $(HEADER_CAND)" || echo "")
+
+# Fail early if headers/libs truly missing
 ifeq ($(strip $(DRAGON_INC)),)
 $(error Could not find libdragon headers. Looked in $(N64_INST)/mips64-elf/include and /n64_toolchain/mips64-elf/include)
 endif
@@ -34,7 +32,7 @@ ifeq ($(strip $(N64_LDSCRIPT)),)
 $(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
 endif
 
-# ====== Compiler/toolchain from PATH (portable) ======
+# ====== Compiler/toolchain from PATH ======
 MIPS_PREFIX ?= mips64-elf
 CC := $(MIPS_PREFIX)-gcc
 AR := $(MIPS_PREFIX)-ar
@@ -44,7 +42,6 @@ TITLE    := Shattered Realms
 ROM      := shattered_realms.z64
 ELF      := shattered_realms.elf
 ROMSIZE  := 2M
-HEADER   := $(N64_INST)/lib/header  # HEADER usually exists under /opt/libdragon/lib; harmless if container provides a default inside n64tool
 
 # ====== Layout ======
 SRC_DIR    := src
@@ -63,9 +60,15 @@ LDFLAGS := -T $(N64_LDSCRIPT) \
            -Wl,--gc-sections
 
 # ====== Phony ======
-.PHONY: all clean distclean run fixcrc
+.PHONY: all clean distclean run fixcrc showpaths
 
 all: $(ROM)
+
+showpaths:
+	@echo "INC=$(DRAGON_INC)"; \
+	echo "LIBDIR=$(DRAGON_LIBDIR)"; \
+	echo "LDSCRIPT=$(N64_LDSCRIPT)"; \
+	echo "HEADER_OPT=$(HEADER_OPT)"
 
 # ====== Compile ======
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
@@ -93,8 +96,7 @@ $(ASSETS_DIR):
 # ====== ROM + CRC ======
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	# ELF MUST be first; no offset on the first file.
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -h "$(HEADER)" -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(HEADER_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@$(MAKE) -s fixcrc
 
 fixcrc:
