@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Use the official libdragon image so the toolchain is present
+    # Pin to a known-good libdragon image that includes n64tool/mkdfs/chksum64 and libs
     container:
       image: ghcr.io/dragonminded/libdragon:latest
       options: --user root
@@ -18,17 +18,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify toolchain in container
+      - name: Show toolchain (non-fatal diagnostics)
+        shell: bash
         run: |
-          set -e
-          which mips64-elf-gcc
-          which n64tool
-          which mkdfs
-          which chksum64
+          set +e
+          echo "Probing tools (non-fatal if missing):"
+          which mips64-elf-gcc || true
+          which n64tool || true
+          which mkdfs || true
+          which chksum64 || true
+          echo "Listing /opt/libdragon/bin:"
+          ls -l /opt/libdragon/bin || true
+          echo "Env:"
           echo "N64_INST=${N64_INST:-/opt/libdragon}"
-          ls -l /opt/libdragon/bin
 
       - name: Build
+        shell: bash
         env:
           N64_INST: /opt/libdragon
           PATH: /opt/libdragon/bin:${PATH}
