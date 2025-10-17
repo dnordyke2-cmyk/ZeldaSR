@@ -1,4 +1,4 @@
-name: Build ROM (libdragon-dev)
+name: Build ROM (official toolchain + SDK)
 
 on:
   push:
@@ -9,43 +9,71 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/dragonminded/libdragon-dev:latest
-      options: --user root
+
     env:
-      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/libdragon/bin:/n64_toolchain/bin
       N64_INST: /opt/libdragon
+      # Keep a sane PATH and add libdragon tools later
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Diagnose SDK and tools (non-fatal)
-        shell: sh
+      - name: Install build prerequisites
         run: |
-          echo "Probing tools:"
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl git jq
+
+      - name: Install libdragon toolchain (.deb from latest release)
+        run: |
+          set -e
+          # Query latest toolchain release assets and pick the Linux .deb
+          API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
+          DEB_URL=$(curl -fsSL "$API" \
+            | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64.*\\.deb$")) | .browser_download_url' \
+            | head -n1)
+          if [ -z "$DEB_URL" ]; then
+            echo "Could not find gcc-toolchain .deb asset in latest toolchain release." >&2
+            exit 1
+          fi
+          echo "Downloading toolchain: $DEB_URL"
+          curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
+          sudo dpkg -i /tmp/n64-toolchain.deb
+          # The package sets N64_INST=/opt/libdragon (per docs). Open a new shell for good measure.
+          echo "N64_INST is set to: ${N64_INST}"
+
+      - name: Install libdragon SDK (headers, libs, tools)
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
+          cd /tmp/libdragon
+          # This installs libdragon + tools (n64tool, mkdfs, chksum64) into $N64_INST
+          ./build.sh
+
+      - name: Diagnose toolchain & SDK
+        run: |
+          set -e
+          echo "Probing tools and files..."
           command -v mips64-elf-gcc || true
           command -v n64tool || true
           command -v mkdfs || true
           command -v chksum64 || true
-          echo "Probing headers/libs:"
-          [ -f /opt/libdragon/mips64-elf/include/libdragon.h ] && echo "libdragon.h OK" || echo "libdragon.h MISSING"
-          [ -f /opt/libdragon/mips64-elf/lib/n64.ld ] && echo "n64.ld OK" || echo "n64.ld MISSING"
+          ls -l $N64_INST/mips64-elf/include/libdragon.h || true
+          ls -l $N64_INST/mips64-elf/lib/n64.ld || true
           echo "PATH=$PATH"
           echo "N64_INST=$N64_INST"
 
-      - name: Build
-        shell: sh
+      - name: Build ROM
+        env:
+          # Append libdragon tools to PATH for n64tool/mkdfs/chksum64
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$N64_INST/bin
         run: |
           set -e
-          echo "Repo structure:"
-          ls -R | head -50 || true
           echo "--- Makefile paths ---"
           make showpaths
           echo "----------------------"
           make clean all 2>&1 | tee build.log
           echo "✅ Build complete."
-          echo "Built files:"
           ls -l shattered_realms.* romfs.dfs || true
 
       - name: Upload artifacts
