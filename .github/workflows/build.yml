@@ -1,4 +1,4 @@
-name: Build ROM (portable paths)
+name: Build ROM (libdragon-dev)
 
 on:
   push:
@@ -9,8 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Use the full SDK image that includes libdragon headers, libs, n64.ld, and tools
     container:
-      image: ghcr.io/dragonminded/libdragon:latest
+      image: ghcr.io/dragonminded/libdragon-dev:latest
       options: --user root
     env:
       # Keep a sane PATH and include both common tool locations
@@ -21,16 +22,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Show toolchain (non-fatal diagnostics)
+      - name: Diagnose SDK and tools (non-fatal)
         shell: sh
         run: |
-          echo "Probing tools (non-fatal):"
+          echo "Probing tools (non-fatal if some are missing):"
           command -v mips64-elf-gcc || true
           command -v n64tool || true
           command -v mkdfs || true
           command -v chksum64 || true
-          echo "N64_INST=${N64_INST}"
+          echo "Probing headers/libs:"
+          [ -f /opt/libdragon/mips64-elf/include/libdragon.h ] && echo "libdragon.h OK" || echo "libdragon.h MISSING"
+          [ -f /opt/libdragon/mips64-elf/lib/n64.ld ] && echo "n64.ld OK" || echo "n64.ld MISSING"
+          ls -l /opt/libdragon/mips64-elf/lib 2>/dev/null || true
           echo "PATH=$PATH"
+          echo "N64_INST=$N64_INST"
 
       - name: Build
         shell: sh
