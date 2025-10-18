@@ -19,36 +19,58 @@ jobs:
 
       - name: Install prerequisites
         run: |
+          set -e
           sudo apt-get update
-          sudo apt-get install -y build-essential git python3 pkg-config libpng-dev zlib1g-dev jq curl xxd
+          sudo apt-get install -y \
+            build-essential git python3 pkg-config libpng-dev zlib1g-dev \
+            jq curl xxd
 
       - name: Install mips64-elf toolchain (arch-aware)
         run: |
           set -e
-          ARCH=$(dpkg --print-architecture)   # amd64 on runners
+          ARCH="$(dpkg --print-architecture)"   # e.g., amd64
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          ASSETS_JSON=$(curl -fsSL "$API")
+          ASSETS_JSON="$(curl -fsSL "$API")"
+
           case "$ARCH" in
             amd64) PATTERN='(x86_64|amd64)\.deb$' ;;
             arm64) PATTERN='(aarch64|arm64)\.deb$' ;;
-            *)     echo "Unsupported arch: $ARCH"; echo "$ASSETS_JSON" | jq -r '.assets[].name'; exit 1 ;;
+            *)
+              echo "Unsupported arch: $ARCH"
+              echo "$ASSETS_JSON" | jq -r '.assets[].name'
+              exit 1
+              ;;
           esac
-          DEB_URL=$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)
-          [ -n "$DEB_URL" ] || { echo "No toolchain .deb matched $PATTERN"; exit 1; }
+
+          DEB_URL="$(echo "$ASSETS_JSON" \
+            | jq -r --arg re "$PATTERN" '.assets[] | select(.name | test($re)) | .browser_download_url' \
+            | head -n1)"
+          if [ -z "$DEB_URL" ]; then
+            echo "No toolchain .deb matched $PATTERN"
+            echo "$ASSETS_JSON" | jq -r '.assets[].name'
+            exit 1
+          fi
+
           echo "Downloading toolchain: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb || true
 
           # Locate toolbin
           sudo mkdir -p /opt/libdragon/bin
-          TOOLBIN=$( (command -v mips64-elf-gcc || true) | xargs -r dirname )
-          [ -n "$TOOLBIN" ] || TOOLBIN=$(find /opt /usr -maxdepth 4 -type f -name mips64-elf-gcc 2>/dev/null | head -n1 | xargs -r dirname || true)
-          [ -n "$TOOLBIN" ] || { echo "mips64-elf-gcc not found after install"; exit 1; }
+          TOOLBIN="$( (command -v mips64-elf-gcc || true) | xargs -r dirname )"
+          if [ -z "$TOOLBIN" ]; then
+            TOOLBIN="$(find /opt /usr -maxdepth 4 -type f -name mips64-elf-gcc 2>/dev/null | head -n1 | xargs -r dirname || true)"
+          fi
+          if [ -z "$TOOLBIN" ]; then
+            echo "mips64-elf-gcc not found after install"
+            exit 1
+          fi
           echo "Toolchain bin at: $TOOLBIN"
 
           # Only symlink if toolbin differs from N64_INST/bin
           if [ "$TOOLBIN" != "/opt/libdragon/bin" ]; then
-            for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip; do
+            for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld \
+                     mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip; do
               if [ -x "$TOOLBIN/$t" ]; then
                 sudo ln -sf "$TOOLBIN/$t" "/opt/libdragon/bin/$t"
               fi
@@ -58,35 +80,35 @@ jobs:
           echo "Final /opt/libdragon/bin:"
           ls -l /opt/libdragon/bin
 
-- name: Install libdragon SDK (headers, libs, tools)
-  run: |
-    set -e
-    git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-    pushd /tmp/libdragon
-    ./build.sh
-    popd
+      - name: Install libdragon SDK (headers, libs, tools)
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
+          pushd /tmp/libdragon
+          ./build.sh
+          popd
 
-    echo "SDK lib dirs:"
-    ls -l /opt/libdragon/lib || true
-    ls -l /opt/libdragon/mips64-elf/lib || true
+          echo "SDK lib dirs:"
+          ls -l /opt/libdragon/lib || true
+          ls -l /opt/libdragon/mips64-elf/lib || true
 
-    # Accept the header from any common location (SDK layout varies)
-    HEADER_CANDS=(
-      "/opt/libdragon/lib/header"
-      "/opt/libdragon/lib/ipl3.bin"
-      "/opt/libdragon/lib/ipl3_6102.bin"
-      "/opt/libdragon/mips64-elf/lib/header"
-    )
-    FOUND=""
-    for f in "${HEADER_CANDS[@]}"; do
-      if [ -f "$f" ]; then FOUND="$f"; break; fi
-    done
-    if [ -z "$FOUND" ]; then
-      echo "ERROR: IPL3 header not found in any known location:"
-      printf '  - %s\n' "${HEADER_CANDS[@]}"
-      exit 1
-    fi
-    echo "Found IPL3 header at: $FOUND"
+          # Accept header from any common location
+          HEADER_CANDS=(
+            "/opt/libdragon/lib/header"
+            "/opt/libdragon/lib/ipl3.bin"
+            "/opt/libdragon/lib/ipl3_6102.bin"
+            "/opt/libdragon/mips64-elf/lib/header"
+          )
+          FOUND=""
+          for f in "${HEADER_CANDS[@]}"; do
+            if [ -f "$f" ]; then FOUND="$f"; break; fi
+          done
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: IPL3 header not found in any known location:"
+            printf '  - %s\n' "${HEADER_CANDS[@]}"
+            exit 1
+          fi
+          echo "Found IPL3 header at: $FOUND"
 
       - name: Diagnose toolchain + SDK
         run: |
@@ -94,8 +116,7 @@ jobs:
           command -v mips64-elf-gcc || (echo "mips64-elf-gcc missing"; exit 1)
           command -v n64tool        || (echo "n64tool missing"; exit 1)
           command -v mkdfs          || (echo "mkdfs missing"; exit 1)
-          command -v chksum64       || echo "WARN: chksum64 not found (CRC skip)"
-          ls -l /opt/libdragon/lib/header
+          command -v chksum64       || echo "WARN: chksum64 not found (CRC will be skipped)"
 
       - name: Build ROM
         run: |
