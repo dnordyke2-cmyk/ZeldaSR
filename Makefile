@@ -42,9 +42,8 @@ ifeq ($(strip $(N64_LDSCRIPT)),)
 $(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
 endif
 
-# --- Use built-in IPL3 bootcode from n64tool (no external header needed) ---
-# Common CIC for homebrew is 6102; change if needed (e.g., 6105).
-IPL3_OPT := --ipl3 6102
+# No external IPL3/header needed — use n64tool defaults (drop the unsupported --ipl3 flag)
+EXTRA_N64TOOL_FLAGS :=
 
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
            -I$(DRAGON_INC)
@@ -60,7 +59,6 @@ showpaths:
 	@echo "INC=$(DRAGON_INC)"
 	@echo "LIBDIR=$(DRAGON_LIBDIR)"
 	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
-	@echo "IPL3_OPT=$(IPL3_OPT)"
 
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
@@ -84,8 +82,9 @@ $(ASSETS_DIR):
 
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	# ELF must be first; DFS second (aligned)
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(IPL3_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	# General flags (title/size/output) MUST come before any file args.
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" -o "$(ROM)" $(EXTRA_N64TOOL_FLAGS) \
+		"$(ELF)" -a 4 $(DFS)
 	@$(MAKE) -s fixcrc
 
 fixcrc:
