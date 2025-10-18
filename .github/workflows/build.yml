@@ -22,17 +22,80 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git python3 pkg-config libpng-dev zlib1g-dev jq curl xxd
 
-      - name: Install libdragon SDK (header + tools)
+      # --- Install the official toolchain (.deb) matching runner arch
+      - name: Install mips64-elf toolchain (arch-aware)
+        run: |
+          set -e
+          ARCH=$(dpkg --print-architecture)   # "amd64" on GitHub runners
+          echo "Runner arch: $ARCH"
+          API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
+          ASSETS_JSON=$(curl -fsSL "$API")
+
+          # Map dpkg arch to asset pattern
+          case "$ARCH" in
+            amd64)  PATTERN='(x86_64|amd64)\.deb$' ;;
+            arm64)  PATTERN='(aarch64|arm64)\.deb$' ;;
+            *)      echo "Unsupported arch: $ARCH"
+                    echo "$ASSETS_JSON" | jq -r '.assets[].name'
+                    exit 1 ;;
+          esac
+
+          DEB_URL=$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" \
+                    '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)
+          if [ -z "$DEB_URL" ]; then
+            echo "No toolchain .deb matched $PATTERN"; echo "$ASSETS_JSON" | jq -r '.assets[].name'; exit 1
+          fi
+
+          echo "Downloading toolchain: $DEB_URL"
+          curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
+          sudo dpkg -i /tmp/n64-toolchain.deb || true
+
+          # Find where the package put mips64-elf-* and symlink into /opt/libdragon/bin
+          sudo mkdir -p /opt/libdragon/bin
+          TOOLBIN=$( (command -v mips64-elf-gcc || true) | xargs -r dirname )
+          if [ -z "$TOOLBIN" ]; then
+            # Search common roots quickly
+            TOOLBIN=$(find /opt /usr -maxdepth 4 -type f -name mips64-elf-gcc 2>/dev/null | head -n1 | xargs -r dirname || true)
+          fi
+          if [ -z "$TOOLBIN" ]; then
+            echo "mips64-elf-gcc not found after toolchain install"; exit 1
+          fi
+          echo "Toolchain bin at: $TOOLBIN"
+
+          # Symlink all cross tools into $N64_INST/bin (what libdragon expects)
+          for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip; do
+            if [ -x "$TOOLBIN/$t" ]; then
+              sudo ln -sf "$TOOLBIN/$t" "/opt/libdragon/bin/$t"
+            fi
+          done
+
+          echo "Final /opt/libdragon/bin:"
+          ls -l /opt/libdragon/bin
+
+      # --- Build & install libdragon itself into /opt/libdragon (headers, libs, tools, IPL3 header)
+      - name: Install libdragon SDK (headers, libs, tools)
         run: |
           set -e
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
           pushd /tmp/libdragon
           ./build.sh
           popd
-          echo "Check header presence:"
-          ls -l /opt/libdragon/lib/header || (echo "Header missing after build.sh" && exit 1)
+
           echo "SDK lib contents:"; ls -l /opt/libdragon/lib || true
           echo "SDK bin contents:"; ls -l /opt/libdragon/bin || true
+          # Confirm the IPL3 header exists (required by many emulators)
+          test -f /opt/libdragon/lib/header || (echo "ERROR: /opt/libdragon/lib/header missing" && exit 1)
+
+      - name: Diagnose toolchain + SDK
+        run: |
+          set -e
+          echo "Probing tools:"
+          command -v mips64-elf-gcc || (echo "mips64-elf-gcc missing"; exit 1)
+          command -v n64tool || (echo "n64tool missing"; exit 1)
+          command -v mkdfs    || (echo "mkdfs missing"; exit 1)
+          command -v chksum64 || echo "WARN: chksum64 not found (CRC will be skipped)"
+          echo "Check header:"
+          ls -l /opt/libdragon/lib/header
 
       - name: Build ROM
         run: |
