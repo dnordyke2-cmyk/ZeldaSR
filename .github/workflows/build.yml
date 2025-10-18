@@ -28,7 +28,7 @@ jobs:
       - name: Install mips64-elf toolchain (arch-aware)
         run: |
           set -e
-          ARCH="$(dpkg --print-architecture)"   # typically amd64
+          ARCH="$(dpkg --print-architecture)"   # amd64 on runners
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
           ASSETS_JSON="$(curl -fsSL "$API")"
           case "$ARCH" in
@@ -43,25 +43,46 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb || true
 
-          # Confirm toolchain availability
+          # Make sure the compiler is actually available
           command -v mips64-elf-gcc || { echo "mips64-elf-gcc not in PATH"; exit 1; }
+          echo "Toolchain OK at $(command -v mips64-elf-gcc)"
 
-      - name: Install libdragon SDK (headers, libs, tools)
+      - name: Install libdragon SDK (headers, libs, tools) and place IPL3 header
         run: |
           set -e
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
           pushd /tmp/libdragon
           ./build.sh
           popd
+
+          # If this libdragon snapshot didn't install an external IPL3 header,
+          # copy a known-good one from the source tree (6102) into /opt/libdragon/lib/header.
+          sudo mkdir -p /opt/libdragon/lib
+          if [ ! -f /opt/libdragon/lib/header ]; then
+            CAND="$(ls /tmp/libdragon/tools/ipl3/*6102*.bin 2>/dev/null | head -n1 || true)"
+            if [ -n "$CAND" ]; then
+              sudo cp "$CAND" /opt/libdragon/lib/header
+            fi
+          fi
+
+          # Final check for header presence (required for your n64tool)
+          if [ ! -f /opt/libdragon/lib/header ] && [ ! -f /opt/libdragon/mips64-elf/lib/header ]; then
+            echo "ERROR: IPL3 header not found. n64tool on this runner requires -h <header>."
+            echo "Searched:"
+            echo "  - /opt/libdragon/lib/header"
+            echo "  - /opt/libdragon/mips64-elf/lib/header"
+            ls -l /opt/libdragon/lib || true
+            ls -l /opt/libdragon/mips64-elf/lib || true
+            exit 1
+          fi
+
           echo "SDK lib dirs:"
           ls -l /opt/libdragon/lib || true
           ls -l /opt/libdragon/mips64-elf/lib || true
           echo "SDK bin:"
           ls -l /opt/libdragon/bin || true
-          # Sanity check tools we need for packing
           command -v n64tool  || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs    || { echo "mkdfs missing after build.sh"; exit 1; }
-          command -v chksum64 || echo "WARN: chksum64 not found (CRC will be skipped)"
 
       - name: Build ROM
         run: |
