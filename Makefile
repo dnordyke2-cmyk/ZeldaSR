@@ -22,34 +22,29 @@ OBJS := $(SRCS:.c=.o)
 # --- Detect libdragon include/lib/ldscript ---
 DRAGON_INC := $(shell \
   if [ -d "$(N64_INST)/mips64-elf/include" ]; then echo "$(N64_INST)/mips64-elf/include"; \
-  elif [ -d "/n64_toolchain/mips64-elf/include" ]; then echo "/n64_toolchain/mips64-elf/include"; \
-  fi)
+  elif [ -d "/n64_toolchain/mips64-elf/include" ]; then echo "/n64_toolchain/mips64-elf/include"; fi)
 
 DRAGON_LIBDIR := $(shell \
   if [ -d "$(N64_INST)/mips64-elf/lib" ]; then echo "$(N64_INST)/mips64-elf/lib"; \
-  elif [ -d "/n64_toolchain/mips64-elf/lib" ]; then echo "/n64_toolchain/mips64-elf/lib"; \
-  fi)
+  elif [ -d "/n64_toolchain/mips64-elf/lib" ]; then echo "/n64_toolchain/mips64-elf/lib"; fi)
 
 N64_LDSCRIPT := $(shell \
   if [ -f "$(N64_INST)/mips64-elf/lib/n64.ld" ]; then echo "$(N64_INST)/mips64-elf/lib/n64.ld"; \
-  elif [ -f "/n64_toolchain/mips64-elf/lib/n64.ld" ]; then echo "/n64_toolchain/mips64-elf/lib/n64.ld"; \
-  fi)
+  elif [ -f "/n64_toolchain/mips64-elf/lib/n64.ld" ]; then echo "/n64_toolchain/mips64-elf/lib/n64.ld"; fi)
 
-# --- Require IPL3 header ---
-HEADER_CANDIDATES := \
-  $(N64_INST)/lib/header \
-  $(N64_INST)/lib/ipl3.bin \
-  $(N64_INST)/lib/ipl3_6102.bin \
-  $(N64_INST)/mips64-elf/lib/header
-
-HEADER_FILE := $(firstword $(foreach f,$(HEADER_CANDIDATES),$(if $(wildcard $(f)),$(f),)))
-ifeq ($(HEADER_FILE),)
-  $(error Missing IPL3 header (looked in $(N64_INST)/lib and friends). \
-Run libdragon ./build.sh so that $(N64_INST)/lib/header exists.)
-else
-  $(info [INFO] Using IPL3 header: $(HEADER_FILE))
-  HEADER_OPT := -h $(HEADER_FILE)
+ifeq ($(strip $(DRAGON_INC)),)
+$(error Could not find libdragon headers. Looked in $(N64_INST)/mips64-elf/include and /n64_toolchain/mips64-elf/include)
 endif
+ifeq ($(strip $(DRAGON_LIBDIR)),)
+$(error Could not find libdragon libraries. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
+endif
+ifeq ($(strip $(N64_LDSCRIPT)),)
+$(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
+endif
+
+# --- Use built-in IPL3 bootcode from n64tool (no external header needed) ---
+# Common CIC for homebrew is 6102; change if needed (e.g., 6105).
+IPL3_OPT := --ipl3 6102
 
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
            -I$(DRAGON_INC)
@@ -65,7 +60,7 @@ showpaths:
 	@echo "INC=$(DRAGON_INC)"
 	@echo "LIBDIR=$(DRAGON_LIBDIR)"
 	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
-	@echo "HEADER_FILE=$(HEADER_FILE)"
+	@echo "IPL3_OPT=$(IPL3_OPT)"
 
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
@@ -89,7 +84,8 @@ $(ASSETS_DIR):
 
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(HEADER_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	# ELF must be first; DFS second (aligned)
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(IPL3_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@$(MAKE) -s fixcrc
 
 fixcrc:
@@ -101,7 +97,7 @@ fixcrc:
 	elif command -v n64crc >/dev/null 2>&1; then \
 		echo "  [CRC] n64crc"; n64crc "$(ROM)"; \
 	else \
-		echo "[WARN] No checksum tool found. Skipping CRC fix."; \
+		echo "[WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
 	fi
 
 clean:
