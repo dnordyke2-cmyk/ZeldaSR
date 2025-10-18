@@ -1,19 +1,31 @@
-# ====== Portable Libdragon detection ======
+# ===============================
+# Zelda: Shattered Realms Makefile
+# Portable libdragon setup (2025)
+# ===============================
+
+# --- SDK root (override if needed) ---
 N64_INST ?= /opt/libdragon
 
-HEADER_CAND  := $(N64_INST)/lib/header
-ifeq ($(wildcard $(HEADER_CAND)),)
-$(error Missing IPL3 header at $(HEADER_CAND). Your libdragon install is incomplete. \
-Run libdragon ./build.sh, or install the SDK so that $(N64_INST)/lib/header exists.)
-endif
-HEADER_OPT   := -h $(HEADER_CAND)
+# --- Toolchain from PATH (portable across images) ---
+MIPS_PREFIX ?= mips64-elf
+CC := $(MIPS_PREFIX)-gcc
+AR := $(MIPS_PREFIX)-ar
 
-# --- In the ROM rule, use HEADER_OPT and fail loudly if missing ---
-$(ROM): $(ELF) $(DFS)
-	@echo "  [ROM] $(ROM)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(HEADER_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
-	@$(MAKE) -s fixcrc
-# Resolve include, lib, and linker script dynamically
+# --- Project settings ---
+TITLE    := Shattered Realms
+ROM      := shattered_realms.z64
+ELF      := shattered_realms.elf
+ROMSIZE  := 2M
+
+# --- Layout ---
+SRC_DIR    := src
+ASSETS_DIR := assets/romfs
+DFS        := romfs.dfs
+
+SRCS := $(wildcard $(SRC_DIR)/*.c)
+OBJS := $(SRCS:.c=.o)
+
+# --- Detect libdragon include/lib/ldscript (support both /opt/libdragon and /n64_toolchain) ---
 DRAGON_INC := $(shell \
   if [ -d "$(N64_INST)/mips64-elf/include" ]; then echo "$(N64_INST)/mips64-elf/include"; \
   elif [ -d "/n64_toolchain/mips64-elf/include" ]; then echo "/n64_toolchain/mips64-elf/include"; \
@@ -29,11 +41,7 @@ N64_LDSCRIPT := $(shell \
   elif [ -f "/n64_toolchain/mips64-elf/lib/n64.ld" ]; then echo "/n64_toolchain/mips64-elf/lib/n64.ld"; \
   else echo ""; fi)
 
-# Optional IPL3 header path (some images provide this; if absent, n64tool will use its default)
-HEADER_CAND := $(N64_INST)/lib/header
-HEADER_OPT  := $(shell [ -f "$(HEADER_CAND)" ] && echo "-h $(HEADER_CAND)" || echo "")
-
-# Fail early if headers/libs truly missing
+# --- Fail early if critical paths are missing ---
 ifeq ($(strip $(DRAGON_INC)),)
 $(error Could not find libdragon headers. Looked in $(N64_INST)/mips64-elf/include and /n64_toolchain/mips64-elf/include)
 endif
@@ -44,26 +52,23 @@ ifeq ($(strip $(N64_LDSCRIPT)),)
 $(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
 endif
 
-# ====== Compiler/toolchain from PATH ======
-MIPS_PREFIX ?= mips64-elf
-CC := $(MIPS_PREFIX)-gcc
-AR := $(MIPS_PREFIX)-ar
+# --- Optional IPL3 header auto-detect across common installs ---
+HEADER_CANDIDATES := \
+  $(N64_INST)/lib/header \
+  $(N64_INST)/lib/ipl3.bin \
+  $(N64_INST)/lib/ipl3_6102.bin \
+  $(N64_INST)/mips64-elf/lib/header
 
-# ====== Project settings ======
-TITLE    := Shattered Realms
-ROM      := shattered_realms.z64
-ELF      := shattered_realms.elf
-ROMSIZE  := 2M
+HEADER_FILE := $(firstword $(foreach f,$(HEADER_CANDIDATES),$(if $(wildcard $(f)),$(f),)))
+ifeq ($(HEADER_FILE),)
+  $(warning [WARN] No IPL3 header found under $(N64_INST)/lib. ROM will be built without -h; some emulators may refuse to boot.)
+  HEADER_OPT :=
+else
+  $(info [INFO] Using IPL3 header: $(HEADER_FILE))
+  HEADER_OPT := -h $(HEADER_FILE)
+endif
 
-# ====== Layout ======
-SRC_DIR    := src
-ASSETS_DIR := assets/romfs
-DFS        := romfs.dfs
-
-SRCS := $(wildcard $(SRC_DIR)/*.c)
-OBJS := $(SRCS:.c=.o)
-
-# ====== Flags ======
+# --- Flags ---
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
            -I$(DRAGON_INC)
 
@@ -71,28 +76,29 @@ LDFLAGS := -T $(N64_LDSCRIPT) \
            -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys \
            -Wl,--gc-sections
 
-# ====== Phony ======
+# --- Phony ---
 .PHONY: all clean distclean run fixcrc showpaths
 
 all: $(ROM)
 
 showpaths:
-	@echo "INC=$(DRAGON_INC)"; \
-	echo "LIBDIR=$(DRAGON_LIBDIR)"; \
-	echo "LDSCRIPT=$(N64_LDSCRIPT)"; \
-	echo "HEADER_OPT=$(HEADER_OPT)"
+	@echo "INC=$(DRAGON_INC)"
+	@echo "LIBDIR=$(DRAGON_LIBDIR)"
+	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
+	@echo "HEADER_FILE=$(or $(HEADER_FILE),<none>)"
+	@echo "HEADER_OPT=$(HEADER_OPT)"
 
-# ====== Compile ======
+# --- Compile ---
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ====== Link ======
+# --- Link ---
 $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# ====== DFS (safe even if empty) ======
+# --- DFS (safe even if empty) ---
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
 		echo "ROMFS is empty; creating placeholder readme.txt"; \
@@ -105,12 +111,14 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# ====== ROM + CRC ======
+# --- ROM pack + checksum ---
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
+	# ELF must be first; no offset on first file. DFS afterwards (-a 4 aligns to 4 bytes).
 	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(HEADER_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@$(MAKE) -s fixcrc
 
+# Try several checksum tools if available; otherwise warn and continue.
 fixcrc:
 	@set -e; \
 	if command -v chksum64 >/dev/null 2>&1; then \
@@ -123,7 +131,7 @@ fixcrc:
 		echo "  [WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
 	fi
 
-# ====== Utilities ======
+# --- Utilities ---
 clean:
 	@echo "  [CLEAN]"
 	@$(RM) -f $(OBJS) $(ELF) $(DFS)
