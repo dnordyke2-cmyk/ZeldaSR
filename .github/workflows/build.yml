@@ -58,16 +58,35 @@ jobs:
           echo "Final /opt/libdragon/bin:"
           ls -l /opt/libdragon/bin
 
-      - name: Install libdragon SDK (headers, libs, tools)
-        run: |
-          set -e
-          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          pushd /tmp/libdragon
-          ./build.sh
-          popd
-          echo "SDK lib contents:"; ls -l /opt/libdragon/lib || true
-          echo "SDK bin contents:"; ls -l /opt/libdragon/bin || true
-          test -f /opt/libdragon/lib/header || (echo "ERROR: /opt/libdragon/lib/header missing" && exit 1)
+- name: Install libdragon SDK (headers, libs, tools)
+  run: |
+    set -e
+    git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
+    pushd /tmp/libdragon
+    ./build.sh
+    popd
+
+    echo "SDK lib dirs:"
+    ls -l /opt/libdragon/lib || true
+    ls -l /opt/libdragon/mips64-elf/lib || true
+
+    # Accept the header from any common location (SDK layout varies)
+    HEADER_CANDS=(
+      "/opt/libdragon/lib/header"
+      "/opt/libdragon/lib/ipl3.bin"
+      "/opt/libdragon/lib/ipl3_6102.bin"
+      "/opt/libdragon/mips64-elf/lib/header"
+    )
+    FOUND=""
+    for f in "${HEADER_CANDS[@]}"; do
+      if [ -f "$f" ]; then FOUND="$f"; break; fi
+    done
+    if [ -z "$FOUND" ]; then
+      echo "ERROR: IPL3 header not found in any known location:"
+      printf '  - %s\n' "${HEADER_CANDS[@]}"
+      exit 1
+    fi
+    echo "Found IPL3 header at: $FOUND"
 
       - name: Diagnose toolchain + SDK
         run: |
