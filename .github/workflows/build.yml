@@ -58,6 +58,54 @@ jobs:
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
 
+      - name: Provision IPL3 header (only if needed by n64tool)
+        run: |
+          set -e
+          if n64tool --help 2>/dev/null | grep -q -- '--ipl3'; then
+            echo "n64tool supports --ipl3; external header not required."
+            exit 0
+          fi
+
+          echo "n64tool does NOT support --ipl3; ensuring /opt/libdragon/lib/header exists..."
+          sudo mkdir -p /opt/libdragon/lib
+
+          # 1) Already present?
+          if [ -f /opt/libdragon/lib/header ]; then
+            echo "Header already present at /opt/libdragon/lib/header"
+            exit 0
+          fi
+          if [ -f /opt/libdragon/mips64-elf/lib/header ]; then
+            echo "Header found at /opt/libdragon/mips64-elf/lib/header; linking..."
+            sudo ln -sf /opt/libdragon/mips64-elf/lib/header /opt/libdragon/lib/header
+            exit 0
+          fi
+
+          # 2) Try copying from the cloned libdragon source (common path)
+          CAND="$(ls /tmp/libdragon/tools/ipl3/*6102*.bin 2>/dev/null | head -n1 || true)"
+          if [ -n "$CAND" ]; then
+            echo "Copying header from $CAND"
+            sudo cp "$CAND" /opt/libdragon/lib/header
+            exit 0
+          fi
+
+          # 3) Fallback: fetch a known-good 6102 IPL3 from upstream (two possible branches)
+          set +e
+          for URL in \
+            https://raw.githubusercontent.com/DragonMinded/libdragon/trunk/tools/ipl3/ipl3_6102.bin \
+            https://raw.githubusercontent.com/DragonMinded/libdragon/master/tools/ipl3/ipl3_6102.bin
+          do
+            echo "Attempting to download IPL3 header from: $URL"
+            if curl -fsSL "$URL" -o /tmp/ipl3_6102.bin; then
+              sudo cp /tmp/ipl3_6102.bin /opt/libdragon/lib/header
+              echo "Downloaded header to /opt/libdragon/lib/header"
+              exit 0
+            fi
+          done
+          set -e
+
+          echo "ERROR: Could not provision an IPL3 header and n64tool lacks --ipl3."
+          exit 1
+
       - name: Build ROM
         run: |
           set -e
