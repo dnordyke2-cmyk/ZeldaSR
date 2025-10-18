@@ -1,4 +1,4 @@
-name: Build ROM (libdragon + IPL3 verified)
+name: Build ZeldaSR ROM
 
 on:
   push:
@@ -9,9 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ubuntu:22.04
-      options: --user root
     env:
       N64_INST: /opt/libdragon
       PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -20,33 +17,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install prerequisites
         run: |
-          apt-get update
-          apt-get install -y build-essential git python3 pkg-config libpng-dev zlib1g-dev curl jq xxd
+          sudo apt-get update
+          sudo apt-get install -y build-essential git python3 pkg-config libpng-dev zlib1g-dev jq curl xxd
 
       - name: Install libdragon SDK (header + tools)
         run: |
           set -e
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          cd /tmp/libdragon
+          pushd /tmp/libdragon
           ./build.sh
-          cp -r /tmp/libdragon/* /opt/libdragon/
-          echo "Installed libdragon. Checking header:"
-          ls -l /opt/libdragon/lib/header || (echo "❌ Missing IPL3 header" && exit 1)
+          popd
+          echo "Check header presence:"
+          ls -l /opt/libdragon/lib/header || (echo "Header missing after build.sh" && exit 1)
+          echo "SDK lib contents:"; ls -l /opt/libdragon/lib || true
+          echo "SDK bin contents:"; ls -l /opt/libdragon/bin || true
 
-      - name: Diagnose toolchain
-        run: |
-          echo "Toolchain tools:"
-          command -v mips64-elf-gcc
-          command -v n64tool
-          command -v mkdfs
-          command -v chksum64
-          ls -l /opt/libdragon/lib/header || true
-          echo "SDK lib contents:"
-          ls -l /opt/libdragon/lib || true
-
-      - name: Build
+      - name: Build ROM
         run: |
           set -e
           echo "--- Makefile paths ---"
