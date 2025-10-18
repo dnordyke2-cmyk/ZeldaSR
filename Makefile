@@ -1,6 +1,18 @@
 # ====== Portable Libdragon detection ======
 N64_INST ?= /opt/libdragon
 
+HEADER_CAND  := $(N64_INST)/lib/header
+ifeq ($(wildcard $(HEADER_CAND)),)
+$(error Missing IPL3 header at $(HEADER_CAND). Your libdragon install is incomplete. \
+Run libdragon ./build.sh, or install the SDK so that $(N64_INST)/lib/header exists.)
+endif
+HEADER_OPT   := -h $(HEADER_CAND)
+
+# --- In the ROM rule, use HEADER_OPT and fail loudly if missing ---
+$(ROM): $(ELF) $(DFS)
+	@echo "  [ROM] $(ROM)"
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" $(HEADER_OPT) -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	@$(MAKE) -s fixcrc
 # Resolve include, lib, and linker script dynamically
 DRAGON_INC := $(shell \
   if [ -d "$(N64_INST)/mips64-elf/include" ]; then echo "$(N64_INST)/mips64-elf/include"; \
