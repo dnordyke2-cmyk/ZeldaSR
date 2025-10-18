@@ -2,8 +2,11 @@
 #include <stdio.h>
 
 /*
- * Zelda: Shattered Realms — verified console + RDPQ bring-up (2025 SDK)
- * Should display bright background, white rectangle, and text.
+ * Zelda: Shattered Realms — hard-visibility RDPQ test (2025 SDK)
+ * - Bright background clear
+ * - Large white rectangle primitive
+ * - Console text rendered while attached
+ * - START cycles background color
  */
 
 int main(void) {
