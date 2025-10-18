@@ -1,4 +1,4 @@
-name: Build ROM (official toolchain + SDK)
+name: Build ROM (libdragon + IPL3 verified)
 
 on:
   push:
@@ -9,90 +9,44 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    container:
+      image: ubuntu:22.04
+      options: --user root
     env:
       N64_INST: /opt/libdragon
-      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl git jq
+          apt-get update
+          apt-get install -y build-essential git python3 pkg-config libpng-dev zlib1g-dev curl jq xxd
 
-      - name: Install libdragon toolchain (.deb, arch-aware)
-        run: |
-          set -e
-          ARCH=$(dpkg --print-architecture)  # amd64 on GitHub runners
-          echo "Runner architecture: $ARCH"
-          API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          ASSETS_JSON=$(curl -fsSL "$API")
-
-          case "$ARCH" in
-            amd64)  PATTERN='(x86_64|amd64)\.deb$' ;;
-            arm64)  PATTERN='(aarch64|arm64)\.deb$' ;;
-            *)      echo "Unsupported arch: $ARCH"; echo "$ASSETS_JSON" | jq -r '.assets[].name'; exit 1 ;;
-          esac
-
-          DEB_URL=$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" \
-                    '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)
-          if [ -z "$DEB_URL" ]; then
-            echo "No toolchain .deb matched $PATTERN for arch=$ARCH" >&2
-            echo "$ASSETS_JSON" | jq -r '.assets[].name'
-            exit 1
-          fi
-
-          echo "Downloading toolchain: $DEB_URL"
-          curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
-          sudo dpkg -i /tmp/n64-toolchain.deb
-
-      - name: Locate toolchain binaries and export PATH
-        run: |
-          set -e
-          # Try common locations first
-          CANDIDATES="/opt/libdragon/bin /n64_toolchain/bin /usr/local/bin /usr/bin /opt /opt/n64-toolchain/bin"
-          TOOLBIN=""
-          for d in $CANDIDATES; do
-            if [ -x "$d/mips64-elf-gcc" ]; then TOOLBIN="$d"; break; fi
-          done
-          # Last-resort search (bounded to /opt and /usr to keep it quick)
-          if [ -z "$TOOLBIN" ]; then
-            TOOLBIN=$(find /opt /usr -type f -name mips64-elf-gcc 2>/dev/null | head -n1 | xargs -r dirname || true)
-          fi
-          if [ -z "$TOOLBIN" ]; then
-            echo "mips64-elf-gcc not found after install." >&2
-            exit 1
-          fi
-          echo "TOOLBIN=$TOOLBIN"
-          echo "TOOLBIN=$TOOLBIN" >> $GITHUB_ENV
-          echo "PATH=$TOOLBIN:$PATH" >> $GITHUB_ENV
-
-      - name: Install libdragon SDK (headers, libs, tools)
+      - name: Install libdragon SDK (header + tools)
         run: |
           set -e
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
           cd /tmp/libdragon
-          ./build.sh  # installs into $N64_INST
+          ./build.sh
+          cp -r /tmp/libdragon/* /opt/libdragon/
+          echo "Installed libdragon. Checking header:"
+          ls -l /opt/libdragon/lib/header || (echo "❌ Missing IPL3 header" && exit 1)
 
-      - name: Diagnose toolchain & SDK
+      - name: Diagnose toolchain
         run: |
-          set -e
-          echo "Using TOOLBIN=$TOOLBIN"
-          command -v mips64-elf-gcc || true
-          command -v n64tool || true
-          command -v mkdfs || true
-          command -v chksum64 || true
-          ls -l $N64_INST/mips64-elf/include/libdragon.h || true
-          ls -l $N64_INST/mips64-elf/lib/n64.ld || true
-          echo "PATH=$PATH"
-          echo "N64_INST=$N64_INST"
+          echo "Toolchain tools:"
+          command -v mips64-elf-gcc
+          command -v n64tool
+          command -v mkdfs
+          command -v chksum64
+          ls -l /opt/libdragon/lib/header || true
+          echo "SDK lib contents:"
+          ls -l /opt/libdragon/lib || true
 
-      - name: Build ROM
-        env:
-          PATH: ${{ env.TOOLBIN }}:${{ env.N64_INST }}/bin:${{ env.PATH }}
+      - name: Build
         run: |
           set -e
           echo "--- Makefile paths ---"
