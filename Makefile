@@ -1,23 +1,15 @@
 # ===============================
-# Zelda: Shattered Realms Makefile — multi-pack matrix
-# Builds 3 ROMs: TOC (modern), LEGACY (no TOC), BIN-first
+# Zelda: Shattered Realms Makefile (ELF + TOC + explicit IPL3)
 # ===============================
 
 N64_INST    ?= /opt/libdragon
 MIPS_PREFIX ?= mips64-elf
 CC          := $(MIPS_PREFIX)-gcc
-OBJCOPY     := $(MIPS_PREFIX)-objcopy
 
 TITLE   := Shattered Realms
+ROM     := shattered_realms.z64
 ELF     := shattered_realms.elf
-BIN     := shattered_realms.bin
 DFS     := romfs.dfs
-
-# Three outputs so we can compare behavior in Ares/OpenEmu
-ROM_TOC     := shattered_realms_toc.z64
-ROM_LEGACY  := shattered_realms_legacy.z64
-ROM_BIN     := shattered_realms_bin.z64
-
 ROMSIZE := 2M
 
 SRC_DIR    := src
@@ -55,9 +47,9 @@ LDFLAGS := -T $(N64_LDSCRIPT) \
            -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys \
            -Wl,--gc-sections
 
-.PHONY: all clean distclean run showpaths fixcrc verifyroms
+.PHONY: all clean distclean run fixcrc showpaths verifyrom
 
-all: $(ROM_TOC) $(ROM_LEGACY) $(ROM_BIN)
+all: $(ROM)
 
 showpaths:
 	@echo "INC=$(DRAGON_INC)"
@@ -73,11 +65,6 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# --- BIN (raw program image) ---
-$(BIN): $(ELF)
-	@echo "  [BIN] $(BIN)"
-	$(OBJCOPY) -O binary $(ELF) $(BIN)
-
 # --- ROMFS (safe even if empty) ---
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
@@ -91,56 +78,51 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# --- Pack 1: TOC build (modern flow: ELF + -T + DFS) ---
-$(ROM_TOC): $(ELF) $(DFS)
-	@echo "  [ROM] $(ROM_TOC)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -R E -C N -T -o "$(ROM_TOC)" "$(ELF)" -a 4 $(DFS)
-	@if [ ! -s "$(ROM_TOC)" ]; then echo "ERROR: n64tool did not create $(ROM_TOC)"; exit 1; fi
-	@$(MAKE) -s fixcrc ROM="$(ROM_TOC)"
-
-# --- Pack 2: LEGACY build (ELF + DFS; NO -T) ---
-$(ROM_LEGACY): $(ELF) $(DFS)
-	@echo "  [ROM] $(ROM_LEGACY)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -R E -C N -o "$(ROM_LEGACY)" "$(ELF)" -a 4 $(DFS)
-	@if [ ! -s "$(ROM_LEGACY)" ]; then echo "ERROR: n64tool did not create $(ROM_LEGACY)"; exit 1; fi
-	@$(MAKE) -s fixcrc ROM="$(ROM_LEGACY)"
-
-# --- Pack 3: BIN-first (BIN + DFS) ---
-$(ROM_BIN): $(BIN) $(DFS)
-	@echo "  [ROM] $(ROM_BIN)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -R E -C N -o "$(ROM_BIN)" "$(BIN)" -a 4 $(DFS) || true
-	@if [ ! -s "$(ROM_BIN)" ]; then echo "ERROR: n64tool did not create $(ROM_BIN)"; exit 1; fi
-	@$(MAKE) -s fixcrc ROM="$(ROM_BIN)"
+# --- Pack ROM: ELF first, DFS second, WITH TOC, and explicit IPL3 6102 ---
+$(ROM): $(ELF) $(DFS)
+	@echo "  [ROM] $(ROM)"
+	# Requires n64tool with --ipl3 support (workflow step ensures this).
+	n64tool --ipl3 6102 -l $(ROMSIZE) -t "$(TITLE)" -R E -C N -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	@if [ ! -s "$(ROM)" ]; then \
+		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
+	fi
+	@$(MAKE) -s fixcrc
+	@$(MAKE) -s verifyrom
+	@ls -lh "$(ROM)"
 
 # --- CRC (best-effort) ---
 fixcrc:
 	@set -e; \
 	if command -v chksum64 >/dev/null 2>&1; then \
-		echo "  [CRC] chksum64 $(ROM)"; chksum64 "$(ROM)" >/dev/null; \
+		echo "  [CRC] chksum64"; chksum64 "$(ROM)" >/dev/null; \
 	elif command -v rn64crc >/dev/null 2>&1; then \
-		echo "  [CRC] rn64crc -u $(ROM)"; rn64crc -u "$(ROM)"; \
+		echo "  [CRC] rn64crc -u"; rn64crc -u "$(ROM)"; \
 	elif command -v n64crc >/dev/null 2>&1; then \
-		echo "  [CRC] n64crc $(ROM)"; n64crc "$(ROM)"; \
+		echo "  [CRC] n64crc"; n64crc "$(ROM)"; \
 	else \
-		echo "[WARN] No checksum tool found; skipping CRC fix for $(ROM)."; \
+		echo "[WARN] No checksum tool found; skipping CRC fix."; \
 	fi
 
-# --- Verify headers for all ROMs ---
-verifyroms: $(ROM_TOC) $(ROM_LEGACY) $(ROM_BIN)
-	@for r in $(ROM_TOC) $(ROM_LEGACY) $(ROM_BIN); do \
-		printf "  [MAGIC] $$r  : "; \
-		xxd -l 4 -g 1 "$$r" | awk 'NR==1{print $$2, $$3, $$4, $$5}'; \
-	done
+# --- Sanity: first 4 bytes must be 80 37 12 40 (big-endian .z64) ---
+verifyrom:
+	@printf "  [MAGIC] "; \
+	xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'; \
+	HEAD=$$(xxd -l 4 -p "$(ROM)"); \
+	if [ "$$HEAD" != "80371240" ]; then \
+		echo "ERROR: ROM magic $$HEAD != 80371240 (bad ROM header)"; \
+		exit 1; \
+	fi
 
+# --- Cleaning ---
 clean:
 	@echo "  [CLEAN]"
-	@$(RM) -f $(OBJS) $(ELF) $(BIN) $(DFS)
+	@$(RM) -f $(OBJS) $(ELF) $(DFS)
 
 distclean: clean
 	@echo "  [DISTCLEAN]"
-	@$(RM) -f $(ROM_TOC) $(ROM_LEGACY) $(ROM_BIN)
+	@$(RM) -f $(ROM)
 	@$(RM) -f $(ASSETS_DIR)/readme.txt
 
-# Convenience: run default pick (TOC) in local env
-run: $(ROM_TOC)
-	@echo "  [RUN] $(ROM_TOC)"
+run: $(ROM)
+	@echo "  [RUN] $(ROM)"
+	@echo "Use your preferred emulator, e.g.: ares $(ROM)"
