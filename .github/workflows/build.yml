@@ -55,33 +55,8 @@ jobs:
           echo "SDK lib:"; ls -l /opt/libdragon/mips64-elf/lib || true
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
-
-      - name: Rebuild n64tool with embedded IPL3 and install it first on PATH
-        run: |
-          set -e
-          # Build n64tool from the libdragon tools Makefile (layout can vary)
-          pushd /tmp/libdragon/tools
-          make clean || true
-          make n64tool
-          # Find the freshly built n64tool
-          N64TOOL_BIN="$(find . -maxdepth 3 -type f -name n64tool -perm -111 | head -n1 || true)"
-          if [ -z "$N64TOOL_BIN" ]; then
-            echo "ERROR: Built n64tool not found under /tmp/libdragon/tools"
-            find . -maxdepth 3 -name n64tool || true
-            exit 1
-          fi
-          sudo install -m 0755 "$N64TOOL_BIN" /opt/libdragon/bin/n64tool
-          popd
-
-          echo "n64tool location: $(command -v n64tool)"
-          n64tool --help | head -80 || true
-
-          # Require --ipl3 to be present now
-          if ! n64tool --help 2>/dev/null | grep -q -- '--ipl3'; then
-            echo "ERROR: Rebuilt n64tool still lacks --ipl3 (embedded IPL3)."
-            exit 1
-          fi
-          echo "OK: n64tool supports --ipl3"
+          echo "n64tool help (note: built-in IPL3 is default):"
+          n64tool --help | sed -n '1,30p'
 
       - name: Build ROM
         run: |
