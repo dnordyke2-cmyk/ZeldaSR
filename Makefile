@@ -1,6 +1,7 @@
 # ============================================================
-# Zelda: Shattered Realms — Makefile using libdragon n64.mk
-# Auto-includes all C files in src/, builds bootable .z64 via libdragon macro
+# Zelda: Shattered Realms — minimal boot Makefile via libdragon n64.mk
+# Step 1: PROVE boot by compiling ONLY src/main.c (which defines main()).
+# After this boots, we will add the other sources back in one shot.
 # ============================================================
 
 N64_INST ?= /opt/libdragon
@@ -12,13 +13,14 @@ N64_ROM_REGION  := E
 N64_ROM_MEDIA   := N
 N64_ROM_SIZE    := 2M
 
-# ---------- Sources (auto-discover every .c under src/)
-SOURCES := $(wildcard src/*.c)
+# ---------- Sources (INTENTIONALLY MINIMAL — ONLY main.c) ----------
+# We will add hud.c, dungeon.c, etc. later *after* this boots.
+SOURCES := src/main.c
 
 # ---------- Assets / ROMFS ----------
 ROMFS_DIRS := assets/romfs
 
-# --- Locate libdragon's n64.mk (try multiple common locations) ---
+# --- Find libdragon's n64.mk ---
 N64_MK := $(firstword \
   $(wildcard $(N64_INST)/n64.mk) \
   $(wildcard $(N64_INST)/libdragon/n64.mk) \
@@ -38,25 +40,41 @@ include $(N64_MK)
 #   build/$(TARGET).elf, build/$(TARGET).z64, build/$(TARGET).dfs (if ROMFS present)
 $(call N64_BUILD_ROM,$(TARGET))
 
-# ---------- Default goal & helper rules ----------
-.PHONY: default all copyouts showpaths clean distclean precheck
+# ---------- Goals & helpers ----------
+.PHONY: default all precheck showpaths copyouts clean distclean checkmain
 .DEFAULT_GOAL := default
 all: default
 
-# Quick sanity: make sure main.c exists and contains "int main"
+# Before building, prove src/main.c exists *and* contains int main(
 precheck:
 	@set -e; \
+	echo "[INFO] N64_INST=$(N64_INST)"; \
+	echo "[INFO] Using n64.mk at: $(N64_MK)"; \
+	echo "[INFO] SOURCES=$(SOURCES)"; \
 	test -f src/main.c || { echo "ERROR: src/main.c missing"; exit 1; }; \
-	grep -q "int main" src/main.c || { echo "ERROR: main() not found in src/main.c"; exit 1; }; \
+	grep -q "int[[:space:]]\+main[[:space:]]*(" src/main.c || { echo "ERROR: main() not found in src/main.c"; exit 1; }; \
 	echo "OK: src/main.c with main() present."
 
-# Build the ROM, copy outputs to repo root, and print header/size
+# After compilation, confirm an object with ' T main' exists before we link
+checkmain:
+	@set -e; \
+	OBJS=$$(echo build/*.o 2>/dev/null || true); \
+	if [ -z "$$OBJS" ]; then echo "ERROR: no objects in build/"; exit 1; fi; \
+	if ! mips64-elf-nm $$OBJS | grep -q ' T main$$'; then \
+	  echo "ERROR: No 'main' symbol found in built objects."; \
+	  mips64-elf-nm $$OBJS | grep -n main || true; \
+	  exit 1; \
+	fi; \
+	echo "OK: main() symbol present in objects."
+
+# Build ROM, copy outputs, print magic + size
 default: precheck build/$(TARGET).z64 copyouts
 	@echo "ROM header (first 16 bytes):"
 	xxd -l 16 -g 1 $(TARGET).z64 || true
 	@echo "ROM size (bytes):"
 	@wc -c < $(TARGET).z64 || true
 
+# Copy to repo root for artifact upload
 copyouts:
 	cp -f build/$(TARGET).z64 $(TARGET).z64
 	cp -f build/$(TARGET).elf $(TARGET).elf
