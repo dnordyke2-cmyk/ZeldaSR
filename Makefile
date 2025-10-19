@@ -1,18 +1,16 @@
 # ===============================
-# Zelda: Shattered Realms Makefile (robust BIN flow)
+# Zelda: Shattered Realms Makefile (ELF + TOC, stable)
 # ===============================
 
-N64_INST ?= /opt/libdragon
+N64_INST    ?= /opt/libdragon
 MIPS_PREFIX ?= mips64-elf
-CC := $(MIPS_PREFIX)-gcc
-OBJCOPY := $(MIPS_PREFIX)-objcopy
+CC          := $(MIPS_PREFIX)-gcc
 
-TITLE    := Shattered Realms
-ROM      := shattered_realms.z64
-ELF      := shattered_realms.elf
-BIN      := shattered_realms.bin
-DFS      := romfs.dfs
-ROMSIZE  := 2M
+TITLE   := Shattered Realms
+ROM     := shattered_realms.z64
+ELF     := shattered_realms.elf
+DFS     := romfs.dfs
+ROMSIZE := 2M
 
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
@@ -20,7 +18,7 @@ ASSETS_DIR := assets/romfs
 SRCS := $(wildcard $(SRC_DIR)/*.c)
 OBJS := $(SRCS:.c=.o)
 
-# --- Detect libdragon include/lib/ldscript ---
+# --- Locate libdragon bits ---
 DRAGON_INC := $(shell \
   if [ -d "$(N64_INST)/mips64-elf/include" ]; then echo "$(N64_INST)/mips64-elf/include"; \
   elif [ -d "/n64_toolchain/mips64-elf/include" ]; then echo "/n64_toolchain/mips64-elf/include"; fi)
@@ -58,6 +56,7 @@ showpaths:
 	@echo "LIBDIR=$(DRAGON_LIBDIR)"
 	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
 
+# --- Compile & link ---
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -66,12 +65,7 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Convert ELF to raw binary (this avoids ELF-in-ROM issues)
-$(BIN): $(ELF)
-	@echo "  [BIN] $(BIN)"
-	$(OBJCOPY) -O binary $(ELF) $(BIN)
-
-# ROMFS: safe even if empty
+# --- ROMFS (safe even if empty) ---
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
 		echo "ROMFS is empty; creating placeholder readme.txt"; \
@@ -84,10 +78,11 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# Pack ROM: header (built-in via n64tool), then BIN, then DFS aligned
-$(ROM): $(BIN) $(DFS)
+# --- Pack ROM: ELF first, DFS second (aligned), WITH TOC ---
+$(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -o "$(ROM)" "$(BIN)" -a 4 $(DFS)
+	# IMPORTANT: Output flag (-o) must precede the first file.
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@if [ ! -s "$(ROM)" ]; then \
 		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
 	fi
@@ -95,6 +90,7 @@ $(ROM): $(BIN) $(DFS)
 	@$(MAKE) -s verifyrom
 	@ls -lh "$(ROM)"
 
+# --- CRC (optional, best-effort) ---
 fixcrc:
 	@set -e; \
 	if command -v chksum64 >/dev/null 2>&1; then \
@@ -107,7 +103,7 @@ fixcrc:
 		echo "[WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
 	fi
 
-# Sanity: first 4 bytes must be 80 37 12 40 (big-endian z64)
+# --- Sanity: first 4 bytes must be 80 37 12 40 (big-endian .z64) ---
 verifyrom:
 	@printf "  [MAGIC] "; \
 	xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'; \
@@ -117,9 +113,10 @@ verifyrom:
 		exit 1; \
 	fi
 
+# --- Cleaning ---
 clean:
 	@echo "  [CLEAN]"
-	@$(RM) -f $(OBJS) $(ELF) $(BIN) $(DFS)
+	@$(RM) -f $(OBJS) $(ELF) $(DFS)
 
 distclean: clean
 	@echo "  [DISTCLEAN]"
