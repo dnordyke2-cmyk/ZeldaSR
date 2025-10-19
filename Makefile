@@ -1,128 +1,71 @@
-# ===============================
-# Zelda: Shattered Realms Makefile (ELF + TOC, minimal)
-# ===============================
+# ============================================================
+# Zelda: Shattered Realms — Makefile using libdragon n64.mk
+# This mirrors the libdragon examples' build system.
+# It yields a bootable .z64 like the example that worked in Ares.
+# ============================================================
 
-N64_INST    ?= /opt/libdragon
-MIPS_PREFIX ?= mips64-elf
-CC          := $(MIPS_PREFIX)-gcc
+# Where libdragon installed its SDK (the workflow exports this)
+N64_INST ?= /opt/libdragon
 
-TITLE   := Shattered Realms
-ROM     := shattered_realms.z64
-ELF     := shattered_realms.elf
-DFS     := romfs.dfs
-ROMSIZE := 2M
+# Include libdragon's canonical build machinery
+include $(N64_INST)/n64.mk
 
-SRC_DIR    := src
-ASSETS_DIR := assets/romfs
+# ---------- Project metadata ----------
+# ROM file base name (without extension)
+TARGET       := shattered_realms
 
-SRCS := $(wildcard $(SRC_DIR)/*.c)
-OBJS := $(SRCS:.c=.o)
+# What shows up in emulator title
+N64_ROM_TITLE  := Shattered Realms
+# Region & media (match example defaults)
+N64_ROM_REGION := E
+N64_ROM_MEDIA  := N
+# ROM size; libdragon expands/pads as needed
+N64_ROM_SIZE   := 2M
 
-# --- Locate libdragon bits ---
-DRAGON_INC := $(shell \
-  if [ -d "$(N64_INST)/mips64-elf/include" ]; then echo "$(N64_INST)/mips64-elf/include"; \
-  elif [ -d "/n64_toolchain/mips64-elf/include" ]; then echo "/n64_toolchain/mips64-elf/include"; fi)
+# ---------- Sources ----------
+# Add your C files here (relative paths OK)
+SOURCES := \
+  src/main.c \
+  src/hud.c \
+  src/dungeon.c \
+  src/combat.c \
+  src/audio.c
 
-DRAGON_LIBDIR := $(shell \
-  if [ -d "$(N64_INST)/mips64-elf/lib" ]; then echo "$(N64_INST)/mips64-elf/lib"; \
-  elif [ -d "/n64_toolchain/mips64-elf/lib" ]; then echo "/n64_toolchain/mips64-elf/lib"; fi)
+# (Optional) extra include dirs:
+# INCLUDES += -Isrc
 
-N64_LDSCRIPT := $(shell \
-  if [ -f "$(N64_INST)/mips64-elf/lib/n64.ld" ]; then echo "$(N64_INST)/mips64-elf/lib/n64.ld"; \
-  elif [ -f "/n64_toolchain/mips64-elf/lib/n64.ld" ]; then echo "/n64_toolchain/mips64-elf/lib/n64.ld"; fi)
+# ---------- Assets / ROMFS ----------
+# Put files under assets/romfs/... ; they'll be packed into a DFS
+ROMFS_DIRS := assets/romfs
 
-ifeq ($(strip $(DRAGON_INC)),)
-$(error Could not find libdragon headers. Looked in $(N64_INST)/mips64-elf/include and /n64_toolchain/mips64-elf/include)
-endif
-ifeq ($(strip $(DRAGON_LIBDIR)),)
-$(error Could not find libdragon libraries. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
-endif
-ifeq ($(strip $(N64_LDSCRIPT)),)
-$(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
-endif
+# ---------- Build outputs ----------
+# This macro from n64.mk produces:
+#   build/$(TARGET).elf
+#   build/$(TARGET).dfs     (if ROMFS_DIRS are set)
+#   build/$(TARGET).z64
+# It also handles TOC/packaging in the libdragon-approved way.
+$(call N64_BUILD_ROM, $(TARGET))
 
-CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
-           -I$(DRAGON_INC)
-LDFLAGS := -T $(N64_LDSCRIPT) \
-           -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys \
-           -Wl,--gc-sections
+# ---------- Convenience targets ----------
+.PHONY: all clean distclean showpaths
 
-.PHONY: all clean distclean run fixcrc showpaths verifyrom
-
-all: $(ROM)
+all: build/$(TARGET).z64
+	@# Copy outputs to repo root for CI artifact upload (optional)
+	cp -f build/$(TARGET).z64 $(TARGET).z64
+	cp -f build/$(TARGET).elf $(TARGET).elf
+	@if [ -f build/$(TARGET).dfs ]; then cp -f build/$(TARGET).dfs romfs.dfs; fi
+	@echo "ROM header (16 bytes):"
+	xxd -l 16 -g 1 $(TARGET).z64 || true
 
 showpaths:
-	@echo "INC=$(DRAGON_INC)"
-	@echo "LIBDIR=$(DRAGON_LIBDIR)"
-	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
+	@echo "Using N64_INST     = $(N64_INST)"
+	@echo "n64.mk             = $(N64_MK)"
+	@echo "N64_TOOLCHAIN_ROOT = $(N64_TOOLCHAIN_ROOT)"
+	@echo "N64_CC             = $(N64_CC)"
+	@echo "N64_LD_SCRIPT      = $(N64_LD_SCRIPT)"
 
-# --- Compile & link ---
-$(SRC_DIR)/%.o: $(SRC_DIR)/%.c
-	@echo "  [CC]  $<"
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(ELF): $(OBJS)
-	@echo "  [LD]  $(ELF)"
-	$(CC) -o $@ $(OBJS) $(LDFLAGS)
-
-# --- ROMFS (safe even if empty) ---
-$(DFS): | $(ASSETS_DIR)
-	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
-		echo "ROMFS is empty; creating placeholder readme.txt"; \
-		printf "ROMFS placeholder.\n" > $(ASSETS_DIR)/readme.txt; \
-	fi
-	@echo "  [DFS] $(DFS)"
-	mkdfs $(DFS) $(ASSETS_DIR)
-
-$(ASSETS_DIR):
-	@mkdir -p $(ASSETS_DIR)
-	@touch $(ASSETS_DIR)/.keep
-
-# --- Pack ROM: ELF first, DFS second (aligned), WITH TOC ---
-$(ROM): $(ELF) $(DFS)
-	@echo "  [ROM] $(ROM)"
-	# IMPORTANT: Output flag (-o) must precede the first file.
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
-	@if [ ! -s "$(ROM)" ]; then \
-		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
-	fi
-	@$(MAKE) -s fixcrc
-	@$(MAKE) -s verifyrom
-	@ls -lh "$(ROM)"
-
-# --- CRC (best-effort) ---
-fixcrc:
-	@set -e; \
-	if command -v chksum64 >/dev/null 2>&1; then \
-		echo "  [CRC] chksum64"; chksum64 "$(ROM)" >/dev/null; \
-	elif command -v rn64crc >/dev/null 2>&1; then \
-		echo "  [CRC] rn64crc -u"; rn64crc -u "$(ROM)"; \
-	elif command -v n64crc >/dev/null 2>&1; then \
-		echo "  [CRC] n64crc"; n64crc "$(ROM)"; \
-	else \
-		echo "[WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
-	fi
-
-# --- Sanity: first 4 bytes must be 80 37 12 40 (big-endian .z64) ---
-verifyrom:
-	@printf "  [MAGIC] "; \
-	xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'; \
-	HEAD=$$(xxd -l 4 -p "$(ROM)"); \
-	if [ "$$HEAD" != "80371240" ]; then \
-		echo "ERROR: ROM magic $$HEAD != 80371240 (bad ROM header)"; \
-		exit 1; \
-	fi
-
-# --- Cleaning ---
 clean:
-	@echo "  [CLEAN]"
-	@$(RM) -f $(OBJS) $(ELF) $(DFS)
+	@$(RM) -rf build
 
 distclean: clean
-	@echo "  [DISTCLEAN]"
-	@$(RM) -f $(ROM)
-	@$(RM) -f $(ASSETS_DIR)/readme.txt
-
-run: $(ROM)
-	@echo "  [RUN] $(ROM)"
-	@echo "Use your preferred emulator, e.g.: ares $(ROM)"
+	@$(RM) -f $(TARGET).z64 $(TARGET).elf romfs.dfs
