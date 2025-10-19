@@ -2,11 +2,9 @@
 #include <stdio.h>
 
 /*
- * Zelda: Shattered Realms — hard-visibility RDPQ test (2025 SDK)
- * - Bright background clear
- * - Large white rectangle primitive
- * - Console text rendered while attached
- * - START cycles background color
+ * Zelda: Shattered Realms — skeleton boot test
+ * Shows a bright background, a white rectangle, and console text.
+ * Press START to cycle background color.
  */
 
 int main(void) {
@@ -21,9 +19,9 @@ int main(void) {
 
     console_init();
     console_clear();
-    printf("Zelda: Shattered Realms (alpha engine test)\n");
-    printf("RDPQ attached: clear + rectangle + console.\n");
-    printf("Press START to cycle background color.\n");
+    printf("Zelda: Shattered Realms (skeleton)\n");
+    printf("RDPQ: clear + rectangle + console\n");
+    printf("START cycles background color.\n");
 
     color_t BG_COLORS[] = {
         RGBA16(10,10,0,1),   // yellow
@@ -38,8 +36,7 @@ int main(void) {
     while (1) {
         joypad_poll();
         joypad_buttons_t btn = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-        if (btn.start)
-            bg_idx = (bg_idx + 1) % BG_COUNT;
+        if (btn.start) bg_idx = (bg_idx + 1) % BG_COUNT;
 
         surface_t *disp = display_get();
         rdpq_attach(disp, NULL);
