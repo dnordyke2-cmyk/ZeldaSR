@@ -1,20 +1,21 @@
 # ===============================
-# Zelda: Shattered Realms Makefile (stable skeleton)
-# Uses n64tool's built-in IPL3 (no --ipl3 / -h flags)
+# Zelda: Shattered Realms Makefile (robust BIN flow)
 # ===============================
 
 N64_INST ?= /opt/libdragon
 MIPS_PREFIX ?= mips64-elf
 CC := $(MIPS_PREFIX)-gcc
+OBJCOPY := $(MIPS_PREFIX)-objcopy
 
 TITLE    := Shattered Realms
 ROM      := shattered_realms.z64
 ELF      := shattered_realms.elf
+BIN      := shattered_realms.bin
+DFS      := romfs.dfs
 ROMSIZE  := 2M
 
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
-DFS        := romfs.dfs
 
 SRCS := $(wildcard $(SRC_DIR)/*.c)
 OBJS := $(SRCS:.c=.o)
@@ -48,7 +49,7 @@ LDFLAGS := -T $(N64_LDSCRIPT) \
            -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys \
            -Wl,--gc-sections
 
-.PHONY: all clean distclean run fixcrc showpaths
+.PHONY: all clean distclean run fixcrc showpaths verifyrom
 
 all: $(ROM)
 
@@ -65,7 +66,12 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# --- DFS (safe even if empty) ---
+# Convert ELF to raw binary (this avoids ELF-in-ROM issues)
+$(BIN): $(ELF)
+	@echo "  [BIN] $(BIN)"
+	$(OBJCOPY) -O binary $(ELF) $(BIN)
+
+# ROMFS: safe even if empty
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
 		echo "ROMFS is empty; creating placeholder readme.txt"; \
@@ -78,15 +84,15 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# --- ROM pack + checksum ---
-$(ROM): $(ELF) $(DFS)
+# Pack ROM: header (built-in via n64tool), then BIN, then DFS aligned
+$(ROM): $(BIN) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	# IMPORTANT: Output flag (-o) must come before the first file.
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" -o "$(ROM)" "$(BIN)" -a 4 $(DFS)
 	@if [ ! -s "$(ROM)" ]; then \
 		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
 	fi
 	@$(MAKE) -s fixcrc
+	@$(MAKE) -s verifyrom
 	@ls -lh "$(ROM)"
 
 fixcrc:
@@ -101,9 +107,19 @@ fixcrc:
 		echo "[WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
 	fi
 
+# Sanity: first 4 bytes must be 80 37 12 40 (big-endian z64)
+verifyrom:
+	@printf "  [MAGIC] "; \
+	xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'; \
+	HEAD=$$(xxd -l 4 -p "$(ROM)"); \
+	if [ "$$HEAD" != "80371240" ]; then \
+		echo "ERROR: ROM magic $$HEAD != 80371240 (bad ROM header)"; \
+		exit 1; \
+	fi
+
 clean:
 	@echo "  [CLEAN]"
-	@$(RM) -f $(OBJS) $(ELF) $(DFS)
+	@$(RM) -f $(OBJS) $(ELF) $(BIN) $(DFS)
 
 distclean: clean
 	@echo "  [DISTCLEAN]"
