@@ -55,7 +55,7 @@ jobs:
           echo "SDK lib:"; ls -l /opt/libdragon/mips64-elf/lib || true
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
-          echo "n64tool help (note: built-in IPL3 is default):"
+          echo "n64tool help (shows built-in IPL3 default):"
           n64tool --help | sed -n '1,30p'
 
       - name: Build ROM
