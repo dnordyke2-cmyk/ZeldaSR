@@ -81,7 +81,7 @@ $(ASSETS_DIR):
 # --- Pack ROM: ELF first, DFS second (aligned), WITH TOC ---
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	# IMPORTANT: Output flag (-o) must precede the first file.
+	# IMPORTANT: Output flag (-o) must come before the first file.
 	n64tool -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@if [ ! -s "$(ROM)" ]; then \
 		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
