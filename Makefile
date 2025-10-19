@@ -56,7 +56,6 @@ $(call N64_BUILD_ROM,$(TARGET))
 .DEFAULT_GOAL := default
 all: default
 
-# IMPORTANT: define a *literal* alias to avoid variable-expansion bugs:
 # If anything asks for 'build/shattered_realms' (no extension), forward to the real .z64.
 build/shattered_realms: build/shattered_realms.z64
 	@true
