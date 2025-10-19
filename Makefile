@@ -1,6 +1,6 @@
 # ============================================================
 # Zelda: Shattered Realms — Makefile using libdragon n64.mk
-# Auto-includes all C files in src/, adds a literal alias to avoid target drift.
+# Explicit source list; guaranteed .z64 via libdragon build macro
 # ============================================================
 
 N64_INST ?= /opt/libdragon
@@ -12,8 +12,13 @@ N64_ROM_REGION  := E
 N64_ROM_MEDIA   := N
 N64_ROM_SIZE    := 2M
 
-# ---------- Sources (auto-discover) ----------
-SOURCES := $(wildcard src/*.c)
+# ---------- Sources (explicit) ----------
+SOURCES := \
+  src/main.c \
+  src/hud.c \
+  src/dungeon.c \
+  src/combat.c \
+  src/audio.c
 
 # ---------- Assets / ROMFS ----------
 ROMFS_DIRS := assets/romfs
@@ -38,14 +43,24 @@ include $(N64_MK)
 #   build/$(TARGET).elf, build/$(TARGET).z64, build/$(TARGET).dfs (if ROMFS)
 $(call N64_BUILD_ROM,$(TARGET))
 
-# ---------- Default goal & compatibility ----------
-.PHONY: default all copyouts showpaths clean distclean
+# ---------- Default goal & aliases ----------
+.PHONY: default all copyouts showpaths clean distclean checkmain
 .DEFAULT_GOAL := default
 all: default
 
-# In case anything asks for 'build/shattered_realms' (no extension), forward:
-build/shattered_realms: build/shattered_realms.z64
+# Optional alias if something requests the no-extension name
+build/$(TARGET): build/$(TARGET).z64
 	@true
+
+# Verify the 'main' symbol exists in the linked objects (fails loudly if missing)
+checkmain:
+	@echo "[CHECK] Looking for main() symbol in objects..."
+	@$(N64_CC) -v >/dev/null 2>&1 || true
+	@set -e; \
+	for o in build/*.o; do :; done 2>/dev/null || { echo "No objects built yet"; exit 1; }; \
+	if ! $(N64_TOOLCHAIN_ROOT)/bin/$(N64_TRIPLET)-nm build/*.o | grep -q ' T main$$'; then \
+	  echo "ERROR: No 'main' symbol found in any object. Did src/main.c compile?"; exit 1; \
+	else echo "OK: main() symbol found."; fi
 
 default: build/$(TARGET).z64 copyouts
 	@echo "ROM header (first 16 bytes):"
@@ -62,6 +77,7 @@ showpaths:
 	@echo "Using N64_INST     = $(N64_INST)"
 	@echo "n64.mk             = $(N64_MK)"
 	@echo "N64_TOOLCHAIN_ROOT = $(N64_TOOLCHAIN_ROOT)"
+	@echo "N64_TRIPLET        = $(N64_TRIPLET)"
 	@echo "N64_CC             = $(N64_CC)"
 	@echo "N64_LD_SCRIPT      = $(N64_LD_SCRIPT)"
 
