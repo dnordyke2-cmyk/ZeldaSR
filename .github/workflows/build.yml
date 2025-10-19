@@ -1,4 +1,4 @@
-name: Build ZeldaSR ROM + hello example
+name: Build ZeldaSR — multi-pack ROMs
 
 on:
   push:
@@ -42,7 +42,6 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb || true
           command -v mips64-elf-gcc || { echo "mips64-elf-gcc not in PATH"; exit 1; }
-          echo "Toolchain OK at $(command -v mips64-elf-gcc)"
 
       - name: Build & install libdragon (headers, libs, tools)
         run: |
@@ -53,39 +52,33 @@ jobs:
           popd
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
+          echo "n64tool synopsis:"
+          n64tool --help | sed -n '1,40p'
 
-      - name: Build ZeldaSR
+      - name: Build all ROM variants
         run: |
           set -e
           echo "--- Makefile paths ---"
           make showpaths
           echo "----------------------"
-          make clean all 2>&1 | tee build.log
-          echo "ZeldaSR ROM header (16 bytes):"
-          xxd -l 16 -g 1 shattered_realms.z64
-          echo "ZeldaSR ROM size (bytes):"
-          wc -c < shattered_realms.z64
+          make distclean
+          make all 2>&1 | tee build.log
+          echo "Headers (first 16 bytes) for each ROM:"
+          for r in shattered_realms_toc.z64 shattered_realms_legacy.z64 shattered_realms_bin.z64; do
+            printf "==> %s\n" "$r"
+            xxd -l 16 -g 1 "$r" || true
+            wc -c < "$r" || true
+          done
 
-      - name: Build libdragon hello example
-        run: |
-          set -e
-          pushd /tmp/libdragon/examples/hello
-          make clean && make
-          popd
-          cp /tmp/libdragon/examples/hello/hello.z64 hello_example.z64
-          echo "hello_example ROM header (16 bytes):"
-          xxd -l 16 -g 1 hello_example.z64
-          echo "hello_example ROM size (bytes):"
-          wc -c < hello_example.z64
-
-      - name: Upload artifacts
+      - name: Upload artifacts (all variants)
         uses: actions/upload-artifact@v4
         with:
-          name: zeldasr_and_example
+          name: zeldasr_multi_pack
           path: |
-            shattered_realms.z64
+            shattered_realms_toc.z64
+            shattered_realms_legacy.z64
+            shattered_realms_bin.z64
             shattered_realms.elf
             romfs.dfs
             build.log
-            hello_example.z64
           if-no-files-found: error
