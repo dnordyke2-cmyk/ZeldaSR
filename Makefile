@@ -19,7 +19,8 @@ SOURCES := \
   src/hud.c \
   src/dungeon.c \
   src/combat.c \
-  src/audio.c
+  src/audio.c \
+  src/entrypoint.c
 
 # Extra include dirs if needed:
 # INCLUDES += -Isrc
