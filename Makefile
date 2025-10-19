@@ -1,5 +1,5 @@
 # ===============================
-# Zelda: Shattered Realms Makefile (ELF + TOC + explicit IPL3)
+# Zelda: Shattered Realms Makefile (ELF + TOC, minimal)
 # ===============================
 
 N64_INST    ?= /opt/libdragon
@@ -78,11 +78,11 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# --- Pack ROM: ELF first, DFS second, WITH TOC, and explicit IPL3 6102 ---
+# --- Pack ROM: ELF first, DFS second (aligned), WITH TOC ---
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	# Requires n64tool with --ipl3 support (workflow step ensures this).
-	n64tool --ipl3 6102 -l $(ROMSIZE) -t "$(TITLE)" -R E -C N -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
+	# IMPORTANT: Output flag (-o) must precede the first file.
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@if [ ! -s "$(ROM)" ]; then \
 		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
 	fi
@@ -100,7 +100,7 @@ fixcrc:
 	elif command -v n64crc >/dev/null 2>&1; then \
 		echo "  [CRC] n64crc"; n64crc "$(ROM)"; \
 	else \
-		echo "[WARN] No checksum tool found; skipping CRC fix."; \
+		echo "[WARN] No checksum tool found (chksum64/rn64crc/n64crc). Skipping CRC fix."; \
 	fi
 
 # --- Sanity: first 4 bytes must be 80 37 12 40 (big-endian .z64) ---
