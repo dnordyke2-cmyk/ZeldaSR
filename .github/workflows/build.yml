@@ -1,4 +1,4 @@
-name: Build ZeldaSR — multi-pack ROMs
+name: Build ZeldaSR with embedded IPL3
 
 on:
   push:
@@ -38,7 +38,6 @@ jobs:
           esac
           DEB_URL="$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)"
           [ -n "$DEB_URL" ] || { echo "No toolchain .deb matched $PATTERN"; exit 1; }
-          echo "Downloading toolchain: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb || true
           command -v mips64-elf-gcc || { echo "mips64-elf-gcc not in PATH"; exit 1; }
@@ -52,10 +51,29 @@ jobs:
           popd
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
-          echo "n64tool synopsis:"
-          n64tool --help | sed -n '1,40p'
 
-      - name: Build all ROM variants
+      - name: Rebuild n64tool with embedded IPL3 and require --ipl3 support
+        run: |
+          set -e
+          pushd /tmp/libdragon/tools
+          make clean || true
+          make n64tool
+          # Find and install freshly built n64tool
+          N64TOOL_BIN="$(find . -maxdepth 3 -type f -name n64tool -perm -111 | head -n1 || true)"
+          [ -n "$N64TOOL_BIN" ] || { echo "Built n64tool not found"; exit 1; }
+          sudo install -m 0755 "$N64TOOL_BIN" /opt/libdragon/bin/n64tool
+          popd
+
+          echo "n64tool located at: $(command -v n64tool)"
+          n64tool --help | head -80 || true
+          # Must expose --ipl3
+          if ! n64tool --help 2>/dev/null | grep -q -- '--ipl3'; then
+            echo "ERROR: n64tool lacks --ipl3; cannot embed known-good IPL3."
+            exit 1
+          fi
+          echo "OK: n64tool supports --ipl3"
+
+      - name: Build ROM
         run: |
           set -e
           echo "--- Makefile paths ---"
@@ -63,21 +81,17 @@ jobs:
           echo "----------------------"
           make distclean
           make all 2>&1 | tee build.log
-          echo "Headers (first 16 bytes) for each ROM:"
-          for r in shattered_realms_toc.z64 shattered_realms_legacy.z64 shattered_realms_bin.z64; do
-            printf "==> %s\n" "$r"
-            xxd -l 16 -g 1 "$r" || true
-            wc -c < "$r" || true
-          done
+          echo "First 16 bytes of ROM:"
+          xxd -l 16 -g 1 shattered_realms.z64 || true
+          echo "ROM size (bytes):"
+          wc -c < shattered_realms.z64 || true
 
-      - name: Upload artifacts (all variants)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zeldasr_multi_pack
+          name: zeldasr_embedded_ipl3
           path: |
-            shattered_realms_toc.z64
-            shattered_realms_legacy.z64
-            shattered_realms_bin.z64
+            shattered_realms.z64
             shattered_realms.elf
             romfs.dfs
             build.log
