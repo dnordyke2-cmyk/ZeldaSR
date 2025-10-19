@@ -1,4 +1,4 @@
-name: Build ZeldaSR ROM
+name: Build ZeldaSR ROM + hello example
 
 on:
   push:
@@ -51,30 +51,41 @@ jobs:
           pushd /tmp/libdragon
           ./build.sh
           popd
-          echo "SDK bin:"; ls -l /opt/libdragon/bin || true
-          echo "SDK lib:"; ls -l /opt/libdragon/mips64-elf/lib || true
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
-          echo "n64tool synopsis (note: built-in IPL3 is default):"
-          n64tool --help | sed -n '1,25p'
 
-      - name: Build ROM
+      - name: Build ZeldaSR
         run: |
           set -e
           echo "--- Makefile paths ---"
           make showpaths
           echo "----------------------"
           make clean all 2>&1 | tee build.log
-          echo "✅ Build complete."
-          ls -l shattered_realms.* romfs.dfs || true
+          echo "ZeldaSR ROM header (16 bytes):"
+          xxd -l 16 -g 1 shattered_realms.z64
+          echo "ZeldaSR ROM size (bytes):"
+          wc -c < shattered_realms.z64
+
+      - name: Build libdragon hello example
+        run: |
+          set -e
+          pushd /tmp/libdragon/examples/hello
+          make clean && make
+          popd
+          cp /tmp/libdragon/examples/hello/hello.z64 hello_example.z64
+          echo "hello_example ROM header (16 bytes):"
+          xxd -l 16 -g 1 hello_example.z64
+          echo "hello_example ROM size (bytes):"
+          wc -c < hello_example.z64
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: shattered_realms
+          name: zeldasr_and_example
           path: |
             shattered_realms.z64
             shattered_realms.elf
             romfs.dfs
             build.log
+            hello_example.z64
           if-no-files-found: error
