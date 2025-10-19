@@ -42,6 +42,7 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb || true
           command -v mips64-elf-gcc || { echo "mips64-elf-gcc not in PATH"; exit 1; }
+          echo "Toolchain OK at $(command -v mips64-elf-gcc)"
 
       - name: Build & install libdragon (headers, libs, tools)
         run: |
@@ -53,25 +54,31 @@ jobs:
           echo "SDK bin:"; ls -l /opt/libdragon/bin || true
           echo "SDK lib:"; ls -l /opt/libdragon/mips64-elf/lib || true
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
+          command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
 
       - name: Rebuild n64tool with embedded IPL3 and install it first on PATH
         run: |
           set -e
-          # Some snapshots ship a n64tool without --ipl3. Force-rebuild the tool from source and install it.
-          pushd /tmp/libdragon/tools/n64tool
+          # Build n64tool from the libdragon tools Makefile (layout can vary)
+          pushd /tmp/libdragon/tools
           make clean || true
-          # The embedded IPL3 support is enabled by default on recent sources. Build it.
-          make
-          sudo install -m 0755 n64tool /opt/libdragon/bin/n64tool
+          make n64tool
+          # Find the freshly built n64tool
+          N64TOOL_BIN="$(find . -maxdepth 3 -type f -name n64tool -perm -111 | head -n1 || true)"
+          if [ -z "$N64TOOL_BIN" ]; then
+            echo "ERROR: Built n64tool not found under /tmp/libdragon/tools"
+            find . -maxdepth 3 -name n64tool || true
+            exit 1
+          fi
+          sudo install -m 0755 "$N64TOOL_BIN" /opt/libdragon/bin/n64tool
           popd
 
           echo "n64tool location: $(command -v n64tool)"
-          n64tool --help | head -50 || true
+          n64tool --help | head -80 || true
 
           # Require --ipl3 to be present now
           if ! n64tool --help 2>/dev/null | grep -q -- '--ipl3'; then
             echo "ERROR: Rebuilt n64tool still lacks --ipl3 (embedded IPL3)."
-            echo "Please keep this step — it guarantees a bootable ROM without external headers."
             exit 1
           fi
           echo "OK: n64tool supports --ipl3"
