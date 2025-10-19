@@ -1,9 +1,9 @@
 # ============================================================
 # Zelda: Shattered Realms — Makefile using libdragon n64.mk
-# Mirrors libdragon examples to guarantee a bootable ROM.
+# Mirrors libdragon examples; adds aliases to avoid missing-target errors.
 # ============================================================
 
-# Where libdragon installed its SDK (the workflow sets this)
+# Where libdragon installed its SDK (your workflow sets this)
 N64_INST ?= /opt/libdragon
 
 # --- Locate libdragon's n64.mk (try multiple common locations) ---
@@ -25,9 +25,9 @@ include $(N64_MK)
 # ---------- Project metadata ----------
 TARGET          := shattered_realms          # base name (no extension)
 N64_ROM_TITLE   := Shattered Realms          # emulator title
-N64_ROM_REGION  := E                         # E = North America
-N64_ROM_MEDIA   := N                         # N = N64 Game Pak
-N64_ROM_SIZE    := 2M                        # ROM size
+N64_ROM_REGION  := E
+N64_ROM_MEDIA   := N
+N64_ROM_SIZE    := 2M
 
 # ---------- Sources ----------
 SOURCES := \
@@ -37,33 +37,38 @@ SOURCES := \
   src/combat.c \
   src/audio.c
 
-# Add extra includes if you need them:
+# Extra include dirs if needed:
 # INCLUDES += -Isrc
 
 # ---------- Assets / ROMFS ----------
 ROMFS_DIRS := assets/romfs
 
 # ---------- Invoke libdragon build macro ----------
-# This defines file targets like:
+# Produces:
 #   build/$(TARGET).elf
-#   build/$(TARGET).dfs   (if ROMFS_DIRS is set)
+#   build/$(TARGET).dfs  (if ROMFS_DIRS set)
 #   build/$(TARGET).z64
 $(call N64_BUILD_ROM,$(TARGET))
 
-# ---------- Default goal & compatibility alias ----------
+# ---------- Aliases / default goals ----------
 .PHONY: default all copyouts showpaths clean distclean
 .DEFAULT_GOAL := default
 all: default
 
-# Build the actual .z64 file target, then copy and show info
+# Some previous rules (or old workflow lines) may ask for 'build/$(TARGET)' without extension.
+# Provide a forwarding alias so the build cannot fail on that name anymore.
+build/$(TARGET): build/$(TARGET).z64
+	@true
+
+# Build the real ROM, then copy to repo root and print header/size.
 default: build/$(TARGET).z64 copyouts
 	@echo "ROM header (first 16 bytes):"
 	xxd -l 16 -g 1 $(TARGET).z64 || true
 	@echo "ROM size (bytes):"
 	@wc -c < $(TARGET).z64 || true
 
-# Copy to repo root for CI artifacts
 copyouts:
+	# Copy to repo root for CI artifact upload
 	cp -f build/$(TARGET).z64 $(TARGET).z64
 	cp -f build/$(TARGET).elf $(TARGET).elf
 	@if [ -f build/$(TARGET).dfs ]; then cp -f build/$(TARGET).dfs romfs.dfs; fi
