@@ -1,4 +1,4 @@
-name: Build ZeldaSR and a libdragon example
+name: Build ZeldaSR via libdragon n64.mk
 
 on:
   push:
@@ -49,6 +49,13 @@ jobs:
           pushd /tmp/libdragon
           ./build.sh
           popd
+          # Ensure n64.mk is available where our Makefile expects it
+          if [ -f /tmp/libdragon/n64.mk ]; then
+            sudo cp /tmp/libdragon/n64.mk /opt/libdragon/n64.mk
+          fi
+          # Diagnostics
+          ls -l /opt/libdragon || true
+          ls -l /opt/libdragon/bin || true
           command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
           command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
 
@@ -60,38 +67,14 @@ jobs:
           make showpaths
           echo "----------------------"
           make all 2>&1 | tee build.log
-          echo "ZeldaSR ROM header (16 bytes):"
-          xxd -l 16 -g 1 shattered_realms.z64
-          echo "ZeldaSR ROM size (bytes):"
-          wc -c < shattered_realms.z64
-
-      - name: Build a libdragon example from this snapshot
-        run: |
-          set -e
-          # Try to build all examples; copy the first .z64 we find.
-          pushd /tmp/libdragon/examples
-          make -j2 || true
-          popd
-          EX_ROM="$(find /tmp/libdragon/examples -type f -name '*.z64' | head -n 1 || true)"
-          if [ -n "$EX_ROM" ]; then
-            cp "$EX_ROM" libdragon_example.z64
-            echo "Example ROM: $EX_ROM"
-            echo "Example ROM header (16 bytes):"
-            xxd -l 16 -g 1 libdragon_example.z64
-            echo "Example ROM size (bytes):"
-            wc -c < libdragon_example.z64
-          else
-            echo "No example ROMs found in this libdragon snapshot."
-          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zeldasr_and_example
+          name: zeldasr_n64mk
           path: |
             shattered_realms.z64
             shattered_realms.elf
             romfs.dfs
             build.log
-            libdragon_example.z64
-          if-no-files-found: warn
+          if-no-files-found: error
