@@ -1,6 +1,6 @@
 # ===============================
-# Zelda: Shattered Realms Makefile (stable)
-# Uses n64tool's built-in IPL3 (no --ipl3 / -h)
+# Zelda: Shattered Realms Makefile (stable skeleton)
+# Uses n64tool's built-in IPL3 (no --ipl3 / -h flags)
 # ===============================
 
 N64_INST ?= /opt/libdragon
