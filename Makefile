@@ -1,6 +1,6 @@
 # ===============================
-# Zelda: Shattered Realms Makefile
-# Auto IPL3 handling for all n64tool variants
+# Zelda: Shattered Realms Makefile (stable)
+# Uses n64tool's built-in IPL3 (no --ipl3 / -h)
 # ===============================
 
 N64_INST ?= /opt/libdragon
@@ -42,30 +42,6 @@ ifeq ($(strip $(N64_LDSCRIPT)),)
 $(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
 endif
 
-# --- IPL3 strategy (handle all environments) ---
-# 1) Prefer n64tool's --ipl3 if supported.
-# 2) Otherwise try external header file.
-# 3) Otherwise error out (do not silently emit a headerless ROM).
-IPL3_SUPPORTED := $(shell (n64tool --help 2>/dev/null | grep -q -- '--ipl3') && echo yes || echo no)
-
-HEADER_CANDIDATES := \
-  $(N64_INST)/lib/header \
-  $(N64_INST)/mips64-elf/lib/header
-HEADER_FILE := $(firstword $(foreach f,$(HEADER_CANDIDATES),$(if $(wildcard $(f)),$(f),)))
-
-ifeq ($(IPL3_SUPPORTED),yes)
-  $(info [INFO] n64tool supports --ipl3; using built-in 6102.)
-  IPL3_OPT := --ipl3 6102
-else
-  ifneq ($(strip $(HEADER_FILE)),)
-    $(info [INFO] Using external IPL3 header: $(HEADER_FILE))
-    IPL3_OPT := -h $(HEADER_FILE)
-  else
-    $(error Neither n64tool --ipl3 is supported nor an external header exists. \
-Please install a libdragon snapshot with --ipl3 in n64tool OR place an IPL3 file at $(N64_INST)/lib/header)
-  endif
-endif
-
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
            -I$(DRAGON_INC)
 LDFLAGS := -T $(N64_LDSCRIPT) \
@@ -80,9 +56,6 @@ showpaths:
 	@echo "INC=$(DRAGON_INC)"
 	@echo "LIBDIR=$(DRAGON_LIBDIR)"
 	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
-	@echo "IPL3_SUPPORTED=$(IPL3_SUPPORTED)"
-	@echo "HEADER_FILE=$(or $(HEADER_FILE),<none>)"
-	@echo "IPL3_OPT=$(IPL3_OPT)"
 
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
@@ -105,13 +78,13 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# --- ROM pack + checksum (and verify output exists) ---
+# --- ROM pack + checksum ---
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -o "$(ROM)" $(IPL3_OPT) "$(ELF)" -a 4 $(DFS)
+	# IMPORTANT: Output flag (-o) must come before the first file.
+	n64tool -l $(ROMSIZE) -t "$(TITLE)" -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
 	@if [ ! -s "$(ROM)" ]; then \
-		echo "ERROR: n64tool did not create $(ROM). Check IPL3 options and n64tool version." >&2; \
-		exit 1; \
+		echo "ERROR: n64tool did not create $(ROM)"; exit 1; \
 	fi
 	@$(MAKE) -s fixcrc
 	@ls -lh "$(ROM)"
