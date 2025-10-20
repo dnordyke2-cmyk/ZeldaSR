@@ -1,8 +1,8 @@
 # ============================================================
 # Zelda: Shattered Realms — explicit build with libdragon tools
-# - Compiles & links explicitly (no hidden SOURCES logic)
+# - Compiles & links explicitly
 # - Verifies exactly one main()
-# - Uses n64elfcompress to produce IPL-friendly payload
+# - Uses n64elfcompress (positional args) to produce IPL-friendly payload
 # - Packs with n64tool -T and fixes CRC if available
 # - Prints ROM magic (80371240) and size
 # ============================================================
@@ -19,7 +19,7 @@ N64TOOL        := n64tool
 
 TITLE   := Shattered Realms
 ELF     := shattered_realms.elf
-BIN64   := shattered_realms.bin64    # compressed/loader-friendly payload
+BIN64   := shattered_realms.bin64
 ROM     := shattered_realms.z64
 DFS     := romfs.dfs
 ROMSIZE := 2M
@@ -27,13 +27,13 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# --- Source list (start minimal; add your other .c files after we boot) ---
+# --- Minimal sources to prove boot; add others after this works ---
 SOURCES := \
   $(SRC_DIR)/main.c
 
 OBJS := $(SOURCES:.c=.o)
 
-# --- Locate lib paths/headers/linker script ---
+# --- Locate libdragon headers/libs/ldscript ---
 DRAGON_INC     := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
 DRAGON_LIBDIR  := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib)     /n64_toolchain/mips64-elf/lib)
 N64_LDSCRIPT   := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib/n64.ld) /n64_toolchain/mips64-elf/lib/n64.ld)
@@ -78,15 +78,15 @@ $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Link (produces an ELF)
+# Link (ELF)
 $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Convert ELF to loader-friendly payload (bin64) using libdragon tool
+# Convert ELF -> BIN64 with positional args (no -i/-o flags)
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
-	$(N64ELFCOMPRESS) -i $(ELF) -o $(BIN64)
+	$(N64ELFCOMPRESS) $(ELF) $(BIN64)
 
 # DFS (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
