@@ -1,11 +1,14 @@
 # ============================================================
-# Zelda: Shattered Realms — libdragon n64.mk (example-parity) with hard sanity
-# - FORCE rebuild (veryclean) so stale objects can't hide 'main'
-# - Build ELF FIRST, verify ' T main' exists, then build Z64
-# - Copy artifacts and print ROM header / size
+# Zelda: Shattered Realms — libdragon n64.mk with hard sanity + fixed triplet
+# Ensures cross tools are used (not host g++) and that main() is present.
 # ============================================================
 
+# SDK root (workflow sets this after building libdragon)
 N64_INST ?= /opt/libdragon
+
+# *** CRITICAL: force the cross triplet and export PATH so n64.mk never picks host g++ ***
+N64_TRIPLET ?= mips64-elf
+export PATH := $(N64_INST)/bin:$(PATH)
 
 # ---------- Project metadata ----------
 TARGET          := shattered_realms
@@ -48,6 +51,8 @@ all: default
 precheck:
 	@set -e; \
 	echo "[INFO] Using n64.mk at: $(N64_MK)"; \
+	echo "[INFO] N64_TRIPLET=$(N64_TRIPLET)"; \
+	echo "[INFO] PATH=$(PATH)"; \
 	echo "[INFO] SOURCES=$(SOURCES)"; \
 	test -f src/main.c || { echo "ERROR: src/main.c missing"; exit 1; }; \
 	COUNT=$$(grep -R --include='*.c' -n "^[[:space:]]*int[[:space:]]\\+main[[:space:]]*(" src 2>/dev/null | wc -l); \
@@ -61,19 +66,20 @@ veryclean:
 	@rm -rf build
 	@rm -f $(TARGET).z64 $(TARGET).elf romfs.dfs
 
-# Build just the ELF (forces a compile of src/main.c), then prove main() exists
+# Build just the ELF first (forces compile with cross tools), then prove main() exists
 build-elf: precheck veryclean
 	@echo "[STEP] Building ELF only (to verify main symbol)…"
-	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) build/$(TARGET).elf V=1
+	# Ensure the triplet is applied to sub-make as well
+	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) build/$(TARGET).elf V=1 N64_TRIPLET=$(N64_TRIPLET)
 
 checkmain: build-elf
 	@echo "[CHECK] Searching for ' T main' in objects…"
 	@set -e; \
 	OBJS=$$(echo build/*.o 2>/dev/null || true); \
 	if [ -z "$$OBJS" ]; then echo "ERROR: no objects in build/"; exit 1; fi; \
-	if ! $(N64_TOOLCHAIN_ROOT)/bin/$(N64_TRIPLET)-nm $$OBJS | grep -q ' T main$$'; then \
+	if ! $(N64_INST)/bin/$(N64_TRIPLET)-nm $$OBJS | grep -q ' T main$$'; then \
 	  echo "ERROR: No 'main' symbol found in built objects. Compilation skipped main.c?"; \
-	  $(N64_TOOLCHAIN_ROOT)/bin/$(N64_TRIPLET)-nm $$OBJS | grep -n main || true; \
+	  $(N64_INST)/bin/$(N64_TRIPLET)-nm $$OBJS | grep -n main || true; \
 	  exit 1; \
 	fi; \
 	echo "OK: main() symbol present."
@@ -81,7 +87,7 @@ checkmain: build-elf
 # After the ELF + symbol check, produce the ROM, copy out, and print info
 default: checkmain
 	@echo "[STEP] Building Z64…"
-	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) build/$(TARGET).z64 V=1
+	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) build/$(TARGET).z64 V=1 N64_TRIPLET=$(N64_TRIPLET)
 	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) copyouts
 	@echo "ROM header (first 16 bytes):"; xxd -l 16 -g 1 $(TARGET).z64 || true
 	@echo "ROM size (bytes):"; wc -c < $(TARGET).z64 || true
