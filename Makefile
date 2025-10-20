@@ -2,7 +2,7 @@
 # Zelda: Shattered Realms — explicit build with libdragon tools
 # - Compiles & links explicitly
 # - Verifies exactly one main()
-# - Uses n64elfcompress (OUTPUT then INPUT) to produce IPL-friendly payload
+# - Uses n64elfcompress (INPUT ELF first, OUTPUT BIN64 second)
 # - Packs with n64tool -T and fixes CRC if available
 # - Prints ROM magic (80371240) and size
 # ============================================================
@@ -83,10 +83,10 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Convert ELF -> BIN64 (IMPORTANT: this tool expects OUTPUT first, then INPUT)
+# Convert ELF -> BIN64 (IMPORTANT: tool expects INPUT first, OUTPUT second)
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
-	$(N64ELFCOMPRESS) $(BIN64) $(ELF)
+	$(N64ELFCOMPRESS) $(ELF) $(BIN64)
 
 # DFS (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
