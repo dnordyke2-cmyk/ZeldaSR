@@ -1,6 +1,8 @@
 # ============================================================
-# Zelda: Shattered Realms — build via libdragon n64.mk (example-parity)
-# Delegates compression/packing to libdragon to avoid tool mismatches.
+# Zelda: Shattered Realms — libdragon n64.mk (example-parity) with hard sanity
+# - FORCE rebuild (veryclean) so stale objects can't hide 'main'
+# - Build ELF FIRST, verify ' T main' exists, then build Z64
+# - Copy artifacts and print ROM header / size
 # ============================================================
 
 N64_INST ?= /opt/libdragon
@@ -12,7 +14,7 @@ N64_ROM_REGION  := E
 N64_ROM_MEDIA   := N
 N64_ROM_SIZE    := 2M
 
-# ---------- Sources (keep minimal to PROVE boot; add others after this works) ----------
+# ---------- Sources (minimal to PROVE boot) ----------
 SOURCES := \
   src/main.c
 
@@ -31,13 +33,14 @@ endif
 include $(N64_MK)
 
 # This macro builds:
-#   build/$(TARGET).elf  (processed appropriately)
+#   build/$(TARGET).elf
 #   build/$(TARGET).z64
 #   build/$(TARGET).dfs (if ROMFS present)
 $(call N64_BUILD_ROM,$(TARGET))
 
 # ---------- Goals & helpers ----------
-.PHONY: default all precheck copyouts showpaths clean distclean
+.PHONY: default all precheck veryclean checkmain copyouts showpaths clean distclean
+
 .DEFAULT_GOAL := default
 all: default
 
@@ -52,11 +55,36 @@ precheck:
 	if [ "$$COUNT" -gt 1 ]; then echo "ERROR: More than one file defines main()"; grep -R --include='*.c' -n "^[[:space:]]*int[[:space:]]\\+main[[:space:]]*(" src || true; exit 1; fi; \
 	echo "OK: exactly one main()."
 
-default: precheck build/$(TARGET).z64 copyouts
-	@echo "ROM header (first 16 bytes):"
-	xxd -l 16 -g 1 $(TARGET).z64 || true
-	@echo "ROM size (bytes):"
-	@wc -c < $(TARGET).z64 || true
+# Hard clean: nuke build/ so objects MUST be rebuilt
+veryclean:
+	@echo "[CLEAN] removing build/ and root artifacts"
+	@rm -rf build
+	@rm -f $(TARGET).z64 $(TARGET).elf romfs.dfs
+
+# Build just the ELF (forces a compile of src/main.c), then prove main() exists
+build-elf: precheck veryclean
+	@echo "[STEP] Building ELF only (to verify main symbol)…"
+	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) build/$(TARGET).elf V=1
+
+checkmain: build-elf
+	@echo "[CHECK] Searching for ' T main' in objects…"
+	@set -e; \
+	OBJS=$$(echo build/*.o 2>/dev/null || true); \
+	if [ -z "$$OBJS" ]; then echo "ERROR: no objects in build/"; exit 1; fi; \
+	if ! $(N64_TOOLCHAIN_ROOT)/bin/$(N64_TRIPLET)-nm $$OBJS | grep -q ' T main$$'; then \
+	  echo "ERROR: No 'main' symbol found in built objects. Compilation skipped main.c?"; \
+	  $(N64_TOOLCHAIN_ROOT)/bin/$(N64_TRIPLET)-nm $$OBJS | grep -n main || true; \
+	  exit 1; \
+	fi; \
+	echo "OK: main() symbol present."
+
+# After the ELF + symbol check, produce the ROM, copy out, and print info
+default: checkmain
+	@echo "[STEP] Building Z64…"
+	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) build/$(TARGET).z64 V=1
+	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) copyouts
+	@echo "ROM header (first 16 bytes):"; xxd -l 16 -g 1 $(TARGET).z64 || true
+	@echo "ROM size (bytes):"; wc -c < $(TARGET).z64 || true
 
 # Copy to repo root for artifact upload
 copyouts:
@@ -67,11 +95,12 @@ copyouts:
 showpaths:
 	@echo "Using N64_INST     = $(N64_INST)"
 	@echo "n64.mk             = $(N64_MK)"
+	@echo "N64_TRIPLET        = $(N64_TRIPLET)"
 	@echo "N64_CC             = $(N64_CC)"
 	@echo "N64_LD_SCRIPT      = $(N64_LD_SCRIPT)"
 
+# Soft clean (kept for convenience)
 clean:
-	@$(RM) -rf build
+	@rm -rf build
 
-distclean: clean
-	@$(RM) -f $(TARGET).z64 $(TARGET).elf romfs.dfs
+distclean: veryclean
