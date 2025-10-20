@@ -2,7 +2,7 @@
 # Zelda: Shattered Realms — explicit build with libdragon tools
 # - Compiles & links explicitly
 # - Verifies exactly one main()
-# - Uses n64elfcompress (INPUT ELF first, OUTPUT BIN64 second)
+# - Uses n64elfcompress with AUTO-DETECTION (tries both arg orders)
 # - Packs with n64tool -T and fixes CRC if available
 # - Prints ROM magic (80371240) and size
 # ============================================================
@@ -12,7 +12,6 @@ MIPS_PREFIX ?= mips64-elf
 
 CC       := $(MIPS_PREFIX)-gcc
 NM       := $(MIPS_PREFIX)-nm
-OBJCOPY  := $(MIPS_PREFIX)-objcopy
 
 N64ELFCOMPRESS := n64elfcompress
 N64TOOL        := n64tool
@@ -27,16 +26,16 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# --- Minimal sources to prove boot; add others after this works ---
+# Start minimal to PROVE boot; add other sources after this works
 SOURCES := \
   $(SRC_DIR)/main.c
 
 OBJS := $(SOURCES:.c=.o)
 
-# --- Locate libdragon headers/libs/ldscript ---
-DRAGON_INC     := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
-DRAGON_LIBDIR  := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib)     /n64_toolchain/mips64-elf/lib)
-N64_LDSCRIPT   := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib/n64.ld) /n64_toolchain/mips64-elf/lib/n64.ld)
+# Locate libdragon headers/libs/linker script
+DRAGON_INC    := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
+DRAGON_LIBDIR := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib)     /n64_toolchain/mips64-elf/lib)
+N64_LDSCRIPT  := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib/n64.ld) /n64_toolchain/mips64-elf/lib/n64.ld)
 
 ifeq ($(strip $(DRAGON_INC)),)
 $(error Could not find libdragon headers. Looked in $(N64_INST)/mips64-elf/include and /n64_toolchain/mips64-elf/include)
@@ -63,7 +62,7 @@ showpaths:
 	@echo "CC=$(CC)"
 	@echo "SOURCES=$(SOURCES)"
 
-# Fail fast if main.c missing or more than one int main(...) is present
+# Fail fast if main() is missing or duplicated
 precheck:
 	@set -e; \
 	echo "[INFO] Using headers at $(DRAGON_INC)"; \
@@ -83,10 +82,22 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Convert ELF -> BIN64 (IMPORTANT: tool expects INPUT first, OUTPUT second)
+# Convert ELF -> BIN64 (AUTO-DETECT argument order)
+# Try: (INPUT, OUTPUT). If it fails *and* error mentions BIN64 as input, retry (OUTPUT, INPUT).
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
-	$(N64ELFCOMPRESS) $(ELF) $(BIN64)
+	@set -e; \
+	rm -f "$(BIN64)"; \
+	# First try: INPUT then OUTPUT
+	if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then : ; else \
+	  if grep -q "error loading ELF file: $(BIN64)" compress.err || grep -q "error opening input file: $(BIN64)" compress.err; then \
+	    echo "    Detected reversed arg order; retrying as: n64elfcompress OUTPUT INPUT"; \
+	    $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)"; \
+	  else \
+	    echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
+	  fi; \
+	fi; rm -f compress.err; \
+	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
 
 # DFS (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
