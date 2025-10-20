@@ -1,132 +1,88 @@
 # ============================================================
-# Zelda: Shattered Realms — explicit build (compile/link/pack)
-# - Exactly ONE main() (in src/main.c)
-# - Non-deprecated display_get()
-# - Clean build each run
-# - Pack ELF+DFS with TOC (-T), fix CRC if available
-# - Print ROM header/size
+# Zelda: Shattered Realms — build via libdragon n64.mk (example-parity)
+# - Uses libdragon's full pipeline (incl. n64elfcompress)
+# - Minimal sources (only main.c) to lock boot; add others after booting
+# - Prints ROM header/size; fails fast if main() missing/duplicated
 # ============================================================
 
-N64_INST    ?= /opt/libdragon
-MIPS_PREFIX ?= mips64-elf
-CC          := $(MIPS_PREFIX)-gcc
-NM          := $(MIPS_PREFIX)-nm
+# SDK install root (your workflow sets this after building libdragon)
+N64_INST ?= /opt/libdragon
 
-TITLE   := Shattered Realms
-ELF     := shattered_realms.elf
-ROM     := shattered_realms.z64
-DFS     := romfs.dfs
-ROMSIZE := 2M
+# ---------- Project metadata ----------
+TARGET          := shattered_realms
+N64_ROM_TITLE   := Shattered Realms
+N64_ROM_REGION  := E
+N64_ROM_MEDIA   := N
+N64_ROM_SIZE    := 2M
 
-SRC_DIR    := src
-ASSETS_DIR := assets/romfs
-
-# ---- Explicit sources (ensure only one main() in the set) ----
+# ---------- Sources (INTENTIONALLY MINIMAL; prove boot first) ----------
 SOURCES := \
-  $(SRC_DIR)/main.c \
-  $(SRC_DIR)/entrypoint.c \
-  $(SRC_DIR)/hud.c \
-  $(SRC_DIR)/dungeon.c \
-  $(SRC_DIR)/combat.c \
-  $(SRC_DIR)/audio.c
+  src/main.c
 
-OBJS := $(SOURCES:.c=.o)
+# ---------- ROMFS ----------
+ROMFS_DIRS := assets/romfs
 
-# --- Locate libdragon headers, libs, and linker script ---
-DRAGON_INC := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
-DRAGON_LIBDIR := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib) /n64_toolchain/mips64-elf/lib)
-N64_LDSCRIPT := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib/n64.ld) /n64_toolchain/mips64-elf/lib/n64.ld)
-
-ifeq ($(strip $(DRAGON_INC)),)
-$(error Could not find libdragon headers. Looked in $(N64_INST)/mips64-elf/include and /n64_toolchain/mips64-elf/include)
-endif
-ifeq ($(strip $(DRAGON_LIBDIR)),)
-$(error Could not find libdragon libraries. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
-endif
-ifeq ($(strip $(N64_LDSCRIPT)),)
-$(error Could not find n64.ld. Looked in $(N64_INST)/mips64-elf/lib and /n64_toolchain/mips64-elf/lib)
+# --- Find libdragon's n64.mk (common locations) ---
+N64_MK := $(firstword \
+  $(wildcard $(N64_INST)/n64.mk) \
+  $(wildcard $(N64_INST)/libdragon/n64.mk) \
+  $(wildcard $(N64_INST)/mips64-elf/libdragon/n64.mk) \
+)
+ifeq ($(strip $(N64_MK)),)
+$(error Could not find libdragon n64.mk. Looked in: \
+  $(N64_INST)/n64.mk, \
+  $(N64_INST)/libdragon/n64.mk, \
+  $(N64_INST)/mips64-elf/libdragon/n64.mk. \
+  Ensure your workflow copies /tmp/libdragon/n64.mk to $(N64_INST)/n64.mk)
 endif
 
-CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections -I$(DRAGON_INC)
-LDFLAGS := -T $(N64_LDSCRIPT) -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys -Wl,--gc-sections
+include $(N64_MK)
 
-.PHONY: all default clean distclean showpaths precheck fixcrc verifyrom
+# This macro (from n64.mk) produces:
+#   build/$(TARGET).elf  (processed via n64elfcompress)
+#   build/$(TARGET).z64
+#   build/$(TARGET).dfs (if ROMFS present)
+$(call N64_BUILD_ROM,$(TARGET))
 
+# ---------- Goals & helpers ----------
+.PHONY: default all precheck copyouts showpaths clean distclean
+.DEFAULT_GOAL := default
 all: default
-default: clean precheck $(ROM) verifyrom
 
-showpaths:
-	@echo "INC=$(DRAGON_INC)"
-	@echo "LIBDIR=$(DRAGON_LIBDIR)"
-	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
-	@echo "CC=$(CC)"
-	@echo "SOURCES=$(SOURCES)"
-
-# Fail fast if multiple mains exist or main() missing
+# Fail fast if main() is missing or duplicated
 precheck:
 	@set -e; \
-	test -f $(SRC_DIR)/main.c || { echo "ERROR: $(SRC_DIR)/main.c missing"; exit 1; }; \
-	COUNT=$$(grep -R --include='*.c' -n "int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) | wc -l); \
-	if [ "$$COUNT" -eq 0 ]; then echo "ERROR: No main() found in src/"; exit 1; fi; \
-	if [ "$$COUNT" -gt 1 ]; then echo "ERROR: More than one file defines main() in src/"; grep -R --include='*.c' -n "int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) || true; exit 1; fi; \
-	echo "OK: exactly one main() in src/main.c"
+	echo "[INFO] Using n64.mk at: $(N64_MK)"; \
+	echo "[INFO] SOURCES=$(SOURCES)"; \
+	test -f src/main.c || { echo "ERROR: src/main.c missing"; exit 1; }; \
+	COUNT=$$(grep -R --include='*.c' -n "int[[:space:]]\\+main[[:space:]]*(" src | wc -l); \
+	if [ "$$COUNT" -eq 0 ]; then echo "ERROR: No main() found under src/"; exit 1; fi; \
+	if [ "$$COUNT" -gt 1 ]; then echo "ERROR: More than one file defines main()"; grep -R --include='*.c' -n "int[[:space:]]\\+main[[:space:]]*(" src || true; exit 1; fi; \
+	echo "OK: exactly one main()."
 
-# Compile
-$(SRC_DIR)/%.o: $(SRC_DIR)/%.c
-	@echo "  [CC]  $<"
-	$(CC) $(CFLAGS) -c $< -o $@
+# Build via n64.mk (runs the exact example pipeline), then copy & print info
+default: precheck build/$(TARGET).z64 copyouts
+	@echo "ROM header (first 16 bytes):"
+	xxd -l 16 -g 1 $(TARGET).z64 || true
+	@echo "ROM size (bytes):"
+	@wc -c < $(TARGET).z64 || true
 
-# Link
-$(ELF): $(OBJS)
-	@echo "  [LD]  $(ELF)"
-	$(CC) -o $@ $(OBJS) $(LDFLAGS)
+# Copy to repo root for artifact upload
+copyouts:
+	cp -f build/$(TARGET).z64 $(TARGET).z64
+	cp -f build/$(TARGET).elf $(TARGET).elf
+	@if [ -f build/$(TARGET).dfs ]; then cp -f build/$(TARGET).dfs romfs.dfs; fi
 
-# DFS (safe even if empty)
-$(DFS): | $(ASSETS_DIR)
-	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
-		echo "ROMFS is empty; creating placeholder readme.txt"; \
-		printf "ROMFS placeholder.\n" > $(ASSETS_DIR)/readme.txt; \
-	fi
-	@echo "  [DFS] $(DFS)"
-	mkdfs $(DFS) $(ASSETS_DIR)
-
-$(ASSETS_DIR):
-	@mkdir -p $(ASSETS_DIR)
-	@touch $(ASSETS_DIR)/.keep
-
-# Pack ROM: ELF first, DFS second (aligned), WITH TOC
-$(ROM): $(ELF) $(DFS)
-	@echo "  [ROM] $(ROM)"
-	n64tool -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS)
-	@if [ ! -s "$(ROM)" ]; then echo "ERROR: n64tool did not create $(ROM)"; exit 1; fi
-	@$(MAKE) -s fixcrc
-
-# CRC fix (best-effort)
-fixcrc:
-	@set -e; \
-	if command -v chksum64 >/dev/null 2>&1; then \
-		echo "  [CRC] chksum64"; chksum64 "$(ROM)" >/dev/null; \
-	elif command -v rn64crc >/dev/null 2>&1; then \
-		echo "  [CRC] rn64crc -u"; rn64crc -u "$(ROM)"; \
-	elif command -v n64crc >/dev/null 2>&1; then \
-		echo "  [CRC] n64crc"; n64crc "$(ROM)"; \
-	else \
-		echo "[WARN] No checksum tool found; skipping CRC fix."; \
-	fi
-
-# Sanity check ROM magic + print size
-verifyrom:
-	@printf "  [MAGIC] "; xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'
-	@HEAD=$$(xxd -l 4 -p "$(ROM)"); \
-	if [ "$$HEAD" != "80371240" ]; then \
-		echo "ERROR: ROM magic $$HEAD != 80371240 (.z64 big-endian)"; exit 1; \
-	fi
-	@echo "  [SIZE] $$(wc -c < "$(ROM)") bytes"
-	@ls -lh "$(ROM)"
+showpaths:
+	@echo "Using N64_INST     = $(N64_INST)"
+	@echo "n64.mk             = $(N64_MK)"
+	@echo "N64_TOOLCHAIN_ROOT = $(N64_TOOLCHAIN_ROOT)"
+	@echo "N64_TRIPLET        = $(N64_TRIPLET)"
+	@echo "N64_CC             = $(N64_CC)"
+	@echo "N64_LD_SCRIPT      = $(N64_LD_SCRIPT)"
 
 clean:
-	@echo "  [CLEAN]"
-	@$(RM) -f $(OBJS) $(ELF) $(DFS) $(ROM) $(ASSETS_DIR)/readme.txt
+	@$(RM) -rf build
 
 distclean: clean
-	@echo "  [DISTCLEAN]"
+	@$(RM) -f $(TARGET).z64 $(TARGET).elf romfs.dfs
