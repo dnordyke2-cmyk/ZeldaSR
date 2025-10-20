@@ -1,14 +1,15 @@
 # ============================================================
 # Zelda: Shattered Realms — explicit build (compile/link/pack)
-# - Guarantees main() is compiled
-# - Forces a clean build each run to avoid stale objects
-# - Packs ELF+DFS with TOC (-T), fixes CRC if tool exists
+# - Exactly ONE main() (in src/main.c)
+# - Non-deprecated display_get()
+# - Clean build each run
+# - Pack ELF+DFS with TOC (-T), fix CRC if available
+# - Print ROM header/size
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
 MIPS_PREFIX ?= mips64-elf
 CC          := $(MIPS_PREFIX)-gcc
-OBJCOPY     := $(MIPS_PREFIX)-objcopy
 NM          := $(MIPS_PREFIX)-nm
 
 TITLE   := Shattered Realms
@@ -20,9 +21,16 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# Build all C files under src/ (ensures main.c is included)
-SRCS := $(wildcard $(SRC_DIR)/*.c)
-OBJS := $(SRCS:.c=.o)
+# ---- Explicit sources (ensure only one main() in the set) ----
+SOURCES := \
+  $(SRC_DIR)/main.c \
+  $(SRC_DIR)/entrypoint.c \
+  $(SRC_DIR)/hud.c \
+  $(SRC_DIR)/dungeon.c \
+  $(SRC_DIR)/combat.c \
+  $(SRC_DIR)/audio.c
+
+OBJS := $(SOURCES:.c=.o)
 
 # --- Locate libdragon headers, libs, and linker script ---
 DRAGON_INC := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
@@ -44,7 +52,6 @@ LDFLAGS := -T $(N64_LDSCRIPT) -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys -W
 
 .PHONY: all default clean distclean showpaths precheck fixcrc verifyrom
 
-# Make the default an end-to-end build that also prints header/size
 all: default
 default: clean precheck $(ROM) verifyrom
 
@@ -53,15 +60,16 @@ showpaths:
 	@echo "LIBDIR=$(DRAGON_LIBDIR)"
 	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
 	@echo "CC=$(CC)"
-	@echo "SRCS=$(SRCS)"
+	@echo "SOURCES=$(SOURCES)"
 
-# Fail fast if main.c is missing or doesn't actually define main(
+# Fail fast if multiple mains exist or main() missing
 precheck:
 	@set -e; \
 	test -f $(SRC_DIR)/main.c || { echo "ERROR: $(SRC_DIR)/main.c missing"; exit 1; }; \
-	grep -q "int[[:space:]]\+main[[:space:]]*(" $(SRC_DIR)/main.c || { echo "ERROR: main() not found in $(SRC_DIR)/main.c"; exit 1; }; \
-	echo "OK: $(SRC_DIR)/main.c with main() present."; \
-	echo "Forcing rebuild…"
+	COUNT=$$(grep -R --include='*.c' -n "int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) | wc -l); \
+	if [ "$$COUNT" -eq 0 ]; then echo "ERROR: No main() found in src/"; exit 1; fi; \
+	if [ "$$COUNT" -gt 1 ]; then echo "ERROR: More than one file defines main() in src/"; grep -R --include='*.c' -n "int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) || true; exit 1; fi; \
+	echo "OK: exactly one main() in src/main.c"
 
 # Compile
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
