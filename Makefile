@@ -1,7 +1,7 @@
 # ============================================================
 # Zelda: Shattered Realms — explicit build (no n64.mk)
-# Compile -> Link -> Compress (auto-detect) -> Pack -> CRC -> Verify
-# Includes a 'showpaths' target for your workflow.
+# Compile -> Link -> Compress (robust multi-try) -> Pack -> CRC -> Verify
+# Includes 'showpaths' for CI diagnostics.
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
@@ -10,9 +10,11 @@ MIPS_PREFIX ?= mips64-elf
 CC      := $(MIPS_PREFIX)-gcc
 CXX     := $(MIPS_PREFIX)-g++
 NM      := $(MIPS_PREFIX)-nm
+OBJCOPY := $(MIPS_PREFIX)-objcopy
 
-N64ELFCOMPRESS := n64elfcompress
-N64TOOL        := n64tool
+N64ELFCOMPRESS ?= n64elfcompress
+N64ELF2ROM    ?= n64elf2rom
+N64TOOL       ?= n64tool
 
 TITLE   := Shattered Realms
 ELF     := shattered_realms.elf
@@ -24,7 +26,7 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# ---- minimal sources to PROVE boot ----
+# ---- minimal sources to PROVE boot first ----
 SOURCES := $(SRC_DIR)/main.c
 OBJS    := $(SOURCES:.c=.o)
 
@@ -54,9 +56,13 @@ default: clean precheck $(ROM) verifyrom
 # ---- diagnostics for CI ----
 showpaths:
 	@echo "TOOLCHAIN:"
-	@echo "  CC  = $$(command -v $(CC) || echo 'MISSING')"
+	@echo "  CC  = $$(command -v $(CC)  || echo 'MISSING')"
 	@echo "  CXX = $$(command -v $(CXX) || echo 'MISSING')"
 	@echo "  NM  = $$(command -v $(NM)  || echo 'MISSING')"
+	@echo "TOOLS:"
+	@echo "  n64elfcompress = $$(command -v $(N64ELFCOMPRESS) || echo 'MISSING')"
+	@echo "  n64elf2rom     = $$(command -v $(N64ELF2ROM) || echo 'MISSING')"
+	@echo "  n64tool        = $$(command -v $(N64TOOL) || echo 'MISSING')"
 	@echo "LIBDRAGON:"
 	@echo "  INC     = $(DRAGON_INC)"
 	@echo "  LIBDIR  = $(DRAGON_LIBDIR)"
@@ -82,19 +88,26 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Compress ELF -> BIN64 (auto-detect arg order differences across runners)
+# Robust ELF -> BIN64:
+# Try in order:
+#   1) n64elfcompress -i ELF -o BIN64
+#   2) n64elfcompress ELF BIN64
+#   3) n64elfcompress BIN64 ELF
+#   4) n64elf2rom ELF BIN64
+#   5) n64elf2rom BIN64 ELF
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; rm -f "$(BIN64)"; \
-	if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then : ; else \
-	  if grep -q "error loading ELF file: $(BIN64)\|error opening input file: $(BIN64)" compress.err; then \
-	    echo "    Detected reversed arg order; retrying as: n64elfcompress OUTPUT INPUT"; \
-	    $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)"; \
-	  else \
-	    echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
-	  fi; \
-	fi; rm -f compress.err; \
-	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
+	try() { echo "    TRY: $$*"; "$$@"; }; \
+	ok()  { [ -s "$(BIN64)" ]; }; \
+	( try $(N64ELFCOMPRESS) -i "$(ELF)" -o "$(BIN64)" ) || true; \
+	ok || ( try $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" ) || true; \
+	ok || ( try $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)" ) || true; \
+	if ! ok && command -v $(N64ELF2ROM) >/dev/null 2>&1; then \
+	  ( try $(N64ELF2ROM) "$(ELF)" "$(BIN64)" ) || true; \
+	  ok || ( try $(N64ELF2ROM) "$(BIN64)" "$(ELF)" ) || true; \
+	fi; \
+	ok || { echo "ERROR: could not produce $(BIN64) with any known tool/ordering"; exit 1; }
 
 # ROM filesystem (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
@@ -116,6 +129,7 @@ $(ROM): $(BIN64) $(DFS)
 	@if [ ! -s "$(ROM)" ]; then echo "ERROR: n64tool did not create $(ROM)"; exit 1; fi
 	@$(MAKE) -s fixcrc
 
+# CRC fix (best-effort)
 fixcrc:
 	@set -e; \
 	if command -v chksum64 >/dev/null 2>&1; then \
