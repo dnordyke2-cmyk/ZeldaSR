@@ -24,28 +24,64 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git curl xxd jq
 
-      - name: Install MIPS64 toolchain (amd64 .deb)
+      - name: Install MIPS64 toolchain (amd64 .deb) and expose binaries
         shell: bash
         run: |
-          set -e
-          API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          DEB_URL=$(curl -fsSL "$API" \
-            | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
-            | head -n1)
-          if [ -z "$DEB_URL" ]; then
-            echo "ERROR: Could not find amd64 gcc-toolchain-mips64 .deb asset." >&2
-            exit 1
-          fi
-          echo "Downloading toolchain: $DEB_URL"
-          curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
-          sudo dpkg -i /tmp/n64-toolchain.deb
+        set -e
+    API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
+    DEB_URL=$(curl -fsSL "$API" \
+      | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
+      | head -n1)
+    if [ -z "$DEB_URL" ]; then
+      echo "ERROR: Could not find amd64 gcc-toolchain-mips64 .deb asset." >&2
+      exit 1
+    fi
+    echo "Downloading toolchain: $DEB_URL"
+    curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
+    sudo dpkg -i /tmp/n64-toolchain.deb
 
-          # Confirm cross tools exist
-          command -v mips64-elf-gcc
-          command -v mips64-elf-g++
+    # Ensure bin dir exists and on PATH for later steps
+    sudo mkdir -p /opt/libdragon/bin
+    echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
 
-          # Ensure /opt/libdragon/bin exists (dpkg usually creates it)
-          sudo mkdir -p /opt/libdragon/bin
+    # Some package builds install only versioned binaries. Create standard symlinks if missing.
+    fix_link () {
+      local name="$1"
+      local found
+      if command -v "$name" >/dev/null 2>&1; then
+        echo "$name already available: $(command -v $name)"
+        return 0
+      fi
+      # Look for versioned binary in common locations
+      found=$(ls /opt/libdragon/bin/${name}-* 2>/dev/null | head -n1 || true)
+      if [ -z "$found" ]; then
+        found=$(ls /n64_toolchain/bin/${name}-* 2>/dev/null | head -n1 || true)
+      fi
+      if [ -z "$found" ]; then
+        # Also try exact (unversioned) in these dirs
+        for d in /opt/libdragon/bin /n64_toolchain/bin; do
+          [ -x "$d/$name" ] && found="$d/$name" && break
+        done
+      fi
+      if [ -n "$found" ]; then
+        echo "Linking $name -> $found"
+        sudo ln -sf "$found" "/opt/libdragon/bin/$name"
+      else
+        echo "WARNING: Could not locate $name in expected dirs"
+      fi
+    }
+
+    for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip mips64-elf-nm; do
+      fix_link "$t"
+    done
+
+    echo "Toolchain contents:"
+    ls -l /opt/libdragon/bin || true
+
+    echo "Verifying key tools are executable on PATH:"
+    command -v mips64-elf-gcc
+    command -v mips64-elf-g++
+    command -v mips64-elf-nm
 
       - name: Build libdragon snapshot (headers/libs) and install to /opt/libdragon
         shell: bash
