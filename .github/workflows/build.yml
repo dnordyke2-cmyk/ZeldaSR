@@ -48,7 +48,7 @@ jobs:
           fix_link () {
             local name="$1"
             local dest="$N64_INST/bin/$name"
-            # If dest is already executable, nothing to do
+            # If dest already executable, nothing to do
             if [ -x "$dest" ]; then
               echo "$name ok at $dest"
               return 0
@@ -110,13 +110,14 @@ jobs:
         shell: bash
         run: |
           set -e
+          export PATH="$N64_INST/bin:$PATH"
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
 
           # Build with the cross toolchain
           make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
 
-          # Install headers/libs/linker scripts into $N64_INST (this is what your Makefile needs)
+          # Install headers/libs/linker scripts into $N64_INST
           sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
 
           # Sanity check the install
@@ -130,10 +131,13 @@ jobs:
         run: |
           set -e
           export PATH="$N64_INST/bin:$PATH"
-          make -C /tmp/libdragon/tools/n64elfcompress clean all
-          make -C /tmp/libdragon/tools/n64tool        clean all
+
+          # Build all libdragon tools from the root (avoids missing 'clean' targets)
+          make -C /tmp/libdragon -j"$(nproc)" tools
+
+          # Install the two we need for packing
           sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
-          sudo install -m 0755 /tmp/libdragon/tools/n64tool/n64tool                 "$N64_INST/bin/n64tool"
+          sudo install -m 0755 /tmp/libdragon/tools/n64tool/n64tool               "$N64_INST/bin/n64tool"
 
           echo "Probing freshly built tools:"
           command -v n64elfcompress && n64elfcompress --help | head -5 || true
