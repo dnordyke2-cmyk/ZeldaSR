@@ -81,16 +81,17 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Prefer n64elf2bin (handles already-compressed ELFs). Fallback to n64elfcompress variants.
+# Produce BIN64 from ELF:
+#  1) Prefer n64elf2bin (handles already-compressed ELFs)
+#  2) Fallback to n64elfcompress (single-arg, then two-arg orders)
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; \
 	if command -v $(N64ELF2BIN) >/dev/null 2>&1; then \
 	  echo "    TRY: n64elf2bin"; \
-	  # try common arg orders
-	  $(N64ELF2BIN) "$(ELF)" -o "$(BIN64)" 2>/dev/null || \
-	  $(N64ELF2BIN) -o "$(BIN64)" "$(ELF)" 2>/dev/null || \
-	  $(N64ELF2BIN) "$(ELF)" "$(BIN64)"; \
+	  ( $(N64ELF2BIN) "$(ELF)" -o "$(BIN64)" || \
+	    $(N64ELF2BIN) -o "$(BIN64)" "$(ELF)" || \
+	    $(N64ELF2BIN) "$(ELF)" "$(BIN64)" ); \
 	else \
 	  echo "    n64elf2bin not found; using n64elfcompress fallbacks"; \
 	  rm -f "$(BIN64)"; \
@@ -118,6 +119,7 @@ $(BIN64): $(ELF)
 	fi; \
 	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
 
+# ROMFS (safe if empty)
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
 		echo "ROMFS empty; creating placeholder"; \
@@ -130,7 +132,7 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# Always pack BIN64
+# Always pack BIN64, never the ELF
 $(ROM): $(BIN64) $(DFS)
 	@echo "  [ROM] $(ROM)"
 	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
