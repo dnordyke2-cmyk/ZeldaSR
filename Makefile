@@ -13,6 +13,7 @@ NM      := $(MIPS_PREFIX)-nm
 
 N64ELFCOMPRESS ?= n64elfcompress
 N64TOOL        ?= n64tool
+MKDFS          ?= mkdfs
 
 TITLE   := Shattered Realms
 ELF     := shattered_realms.elf
@@ -24,11 +25,9 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# ---- minimal sources to PROVE boot first ----
 SOURCES := $(SRC_DIR)/main.c
 OBJS    := $(SOURCES:.c=.o)
 
-# ---- locate headers/libs/linker script ----
 DRAGON_INC    := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
 DRAGON_LIBDIR := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib)     /n64_toolchain/mips64-elf/lib)
 N64_LDSCRIPT  := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib/n64.ld) /n64_toolchain/mips64-elf/lib/n64.ld)
@@ -51,7 +50,6 @@ LDFLAGS := -T $(N64_LDSCRIPT) -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys -W
 all: default
 default: clean precheck $(ROM) verifyrom
 
-# ---- diagnostics for CI ----
 showpaths:
 	@echo "TOOLCHAIN:"
 	@echo "  CC  = $$(command -v $(CC)  || echo 'MISSING')"
@@ -67,7 +65,6 @@ showpaths:
 	@echo "  LDSCRIPT= $(N64_LDSCRIPT)"
 	@echo "SOURCES = $(SOURCES)"
 
-# Fail fast if main missing/duplicated
 precheck:
 	@set -e; \
 	test -f $(SRC_DIR)/main.c || { echo "ERROR: $(SRC_DIR)/main.c missing"; exit 1; }; \
@@ -76,32 +73,24 @@ precheck:
 	if [ "$$COUNT" -gt 1 ]; then echo "ERROR: More than one file defines main()"; grep -R --include='*.c' -n "^[[:space:]]*int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) || true; exit 1; fi; \
 	echo "OK: exactly one main()."
 
-# Compile
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Link ELF
 $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Single-argument n64elfcompress support:
-# Many runners ship a variant that wants ONLY the ELF and writes <ELF>.bin64 next to it.
 define DO_SINGLE_ARG_COMPRESS
 rm -f "$(BIN64)"; \
 $(N64ELFCOMPRESS) "$(ELF)" || exit 1; \
 if [ ! -s "$(BIN64)" ]; then \
-  # Some builds write <basename>.bin64 with full input path – catch both
   B="$$(basename "$(ELF)")"; \
   if [ -s "$${B}.bin64" ]; then mv -f "$${B}.bin64" "$(BIN64)"; fi; \
 fi; \
 [ -s "$(BIN64)" ]
 endef
 
-# Produce BIN64 robustly:
-#  1) Try the single-argument variant (produces <ELF>.bin64)
-#  2) If that fails, try two-argument styles in both orders (older variants)
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; \
@@ -126,32 +115,26 @@ $(BIN64): $(ELF)
 	  echo "ERROR: n64elfcompress not found"; exit 1; \
 	fi
 
-# ROM filesystem (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
 		echo "ROMFS empty; creating placeholder"; \
 		printf "ROMFS placeholder.\n" > $(ASSETS_DIR)/readme.txt; \
 	fi
 	@echo "  [DFS] $(DFS)"
-	mkdfs $(DFS) $(ASSETS_DIR)
+	$(MKDFS) $(DFS) $(ASSETS_DIR)
 
 $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# ---- Pack ROM:
-# First, try letting n64tool eat the ELF directly (newer toolchains).
-# If that fails, fall back to the BIN64 path we prepared above.
 $(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
 	@set -e; \
 	ok_pack() { [ -s "$(ROM)" ]; }; \
 	rm -f "$(ROM)"; \
-	# Attempt 1: direct ELF -> ROM
 	echo "    TRY: n64tool (ELF directly)"; \
 	if $(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS) 2>pack.err; then :; fi; \
 	if ok_pack; then echo "    OK: packed ROM from ELF"; rm -f pack.err; $(MAKE) -s fixcrc; exit 0; fi; \
-	# Attempt 2: go through BIN64
 	echo "    Fallback: via BIN64"; \
 	$(MAKE) -s $(BIN64); \
 	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS); \
@@ -159,7 +142,6 @@ $(ROM): $(ELF) $(DFS)
 	rm -f pack.err; \
 	$(MAKE) -s fixcrc
 
-# CRC fix (best-effort)
 fixcrc:
 	@set -e; \
 	if command -v chksum64 >/dev/null 2>&1; then \
@@ -172,7 +154,6 @@ fixcrc:
 		echo "[WARN] No checksum tool; skipping CRC fix."; \
 	fi
 
-# Verify ROM header & report size
 verifyrom:
 	@printf "  [MAGIC] "; xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'
 	@HEAD=$$(xxd -l 4 -p "$(ROM)"); \
