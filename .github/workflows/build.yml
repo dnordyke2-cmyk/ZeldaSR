@@ -43,7 +43,6 @@ jobs:
 
           sudo mkdir -p "$N64_INST/bin"
 
-          # Create standard symlinks if the package only installed versioned binaries
           fix_link () {
             local name="$1"
             local dest="$N64_INST/bin/$name"
@@ -92,27 +91,23 @@ jobs:
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
 
-          # Build with the cross toolchain and install
           make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
           sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
 
-          # Sanity check the install
           test -f "$N64_INST/mips64-elf/lib/n64.ld"
           test -f "$N64_INST/mips64-elf/include/libdragon.h"
           test -f "$N64_INST/mips64-elf/lib/libdragon.a"
           test -f "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
-      - name: Build & install libdragon tools (n64elfcompress, n64tool, mkdfs)
+      - name: Build & install libdragon tools (n64elf2rom, n64elfcompress, n64tool, mkdfs)
         shell: bash
         run: |
           set -e
           export PATH="$N64_INST/bin:$PATH"
           make -C /tmp/libdragon -j"$(nproc)" tools
 
-          # Resolve tool binary paths robustly (top-level or subdir)
           find_tool () {
-            local base="$1"
-            local root="/tmp/libdragon/tools"
+            local base="$1"; local root="/tmp/libdragon/tools"
             if [ -f "$root/$base" ] && [ -x "$root/$base" ]; then echo "$root/$base"; return 0; fi
             if [ -f "$root/$base/$base" ] && [ -x "$root/$base/$base" ]; then echo "$root/$base/$base"; return 0; fi
             local hit; hit=$(find "$root" -maxdepth 2 -type f -name "$base" -perm -111 | head -n1 || true)
@@ -120,23 +115,24 @@ jobs:
             return 1
           }
 
-          N64ELFCOMPRESS_BIN="$(find_tool n64elfcompress)" || { echo "ERROR: Could not locate built n64elfcompress"; exit 1; }
-          N64TOOL_BIN="$(find_tool n64tool)"               || { echo "ERROR: Could not locate built n64tool"; exit 1; }
-          MKDFS_BIN="$(find_tool mkdfs)"                   || { echo "ERROR: Could not locate built mkdfs"; exit 1; }
+          N64ELF2ROM_BIN="$(find_tool n64elf2rom || true)"
+          N64ELFCOMPRESS_BIN="$(find_tool n64elfcompress)"
+          N64TOOL_BIN="$(find_tool n64tool)"
+          MKDFS_BIN="$(find_tool mkdfs)"
 
-          echo "Installing tools:"
-          echo "  n64elfcompress -> $N64ELFCOMPRESS_BIN"
-          echo "  n64tool        -> $N64TOOL_BIN"
-          echo "  mkdfs          -> $MKDFS_BIN"
-
+          # Install what we have (elf2rom may not exist on older snapshots)
+          if [ -n "$N64ELF2ROM_BIN" ]; then
+            sudo install -m 0755 "$N64ELF2ROM_BIN" "$N64_INST/bin/n64elf2rom"
+          fi
           sudo install -m 0755 "$N64ELFCOMPRESS_BIN" "$N64_INST/bin/n64elfcompress"
           sudo install -m 0755 "$N64TOOL_BIN"        "$N64_INST/bin/n64tool"
           sudo install -m 0755 "$MKDFS_BIN"          "$N64_INST/bin/mkdfs"
 
           echo "Probing freshly built tools:"
+          command -v n64elf2rom     && n64elf2rom     --help | head -5 || true
           command -v n64elfcompress && n64elfcompress --help | head -5 || true
-          command -v n64tool        && n64tool --help        | head -10 || true
-          command -v mkdfs          && mkdfs --help          | head -5 || true
+          command -v n64tool        && n64tool        --help | head -10 || true
+          command -v mkdfs          && mkdfs          --help | head -5 || true
 
       - name: Build ROM
         shell: bash
