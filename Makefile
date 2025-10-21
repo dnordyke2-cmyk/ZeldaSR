@@ -82,8 +82,8 @@ $(ELF): $(OBJS)
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
 # Produce BIN64 from ELF:
-#  1) Prefer n64elf2bin (handles already-compressed ELFs)
-#  2) Fallback to n64elfcompress (single-arg, then two-arg orders)
+#  1) Prefer n64elf2bin (or elf2rom installed under that name)
+#  2) Fallback to n64elfcompress single-arg (then search), then 2-arg orders
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; \
@@ -98,9 +98,10 @@ $(BIN64): $(ELF)
 	  if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
 	    echo "    TRY: n64elfcompress (single-arg)"; \
 	    $(N64ELFCOMPRESS) "$(ELF)" || true; \
+	    # Look for any bin64 created anywhere newer than the ELF
 	    if [ ! -s "$(BIN64)" ]; then \
-	      B="$$(basename "$(ELF)")"; \
-	      [ -s "$${B}.bin64" ] && mv -f "$${B}.bin64" "$(BIN64)"; \
+	      CAND="$$(find . -type f -name '*.bin64' -newer '$(ELF)' -size +0c | head -n1)"; \
+	      if [ -n "$$CAND" ]; then echo "    Found produced BIN64 at $$CAND"; mv -f "$$CAND" "$(BIN64)"; fi; \
 	    fi; \
 	    if [ ! -s "$(BIN64)" ]; then \
 	      echo "    Single-arg mode didn’t produce $(BIN64); trying 2-arg fallbacks"; \
