@@ -41,21 +41,19 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
-          # Ensure bin dir exists and add to PATH for *this* step and later steps
-          sudo mkdir -p /opt/libdragon/bin
-          export PATH="/opt/libdragon/bin:$PATH"
-          echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
+          # Ensure bin dir exists
+          sudo mkdir -p "$N64_INST/bin"
 
-          # Create standard symlinks if only versioned binaries exist
+          # Create standard symlinks if the package only installed versioned binaries
           fix_link () {
             local name="$1"
-            local dest="/opt/libdragon/bin/$name"
-            # If dest already executable, nothing to do
+            local dest="$N64_INST/bin/$name"
+            # If dest is already executable, nothing to do
             if [ -x "$dest" ]; then
               echo "$name ok at $dest"
               return 0
             fi
-            # If found on PATH elsewhere, link dest -> existing
+            # If it's somewhere on PATH already, link to it
             if command -v "$name" >/dev/null 2>&1; then
               local existing
               existing="$(command -v "$name")"
@@ -67,9 +65,9 @@ jobs:
               sudo ln -sf "$existing" "$dest"
               return 0
             fi
-            # Search for versioned or unversioned binaries in common dirs
+            # Search common dirs for versioned or unversioned binaries
             local found=""
-            for d in /opt/libdragon/bin /n64_toolchain/bin /usr/local/bin /usr/bin; do
+            for d in "$N64_INST/bin" /n64_toolchain/bin /usr/local/bin /usr/bin; do
               if compgen -G "$d/${name}-*" > /dev/null; then
                 found="$(ls -1 "$d/${name}-*" | head -n1)"
                 break
@@ -80,7 +78,6 @@ jobs:
               fi
             done
             if [ -n "$found" ]; then
-              # Avoid linking a file to itself
               if [ "$found" = "$dest" ]; then
                 echo "$name already at $dest"
                 return 0
@@ -97,43 +94,42 @@ jobs:
           done
 
           echo "Toolchain contents:"
-          ls -l /opt/libdragon/bin || true
+          ls -l "$N64_INST/bin" || true
 
-          echo "Verifying key tools are executable on PATH (this step):"
+          # Make tools visible now and later
+          export PATH="$N64_INST/bin:$PATH"
+          hash -r
+          echo "$N64_INST/bin" >> "$GITHUB_PATH"
+
+          echo "Verifying key tools are executable on PATH (now: $PATH):"
           command -v mips64-elf-gcc
           command -v mips64-elf-g++
           command -v mips64-elf-nm
 
-      - name: Build libdragon snapshot (headers/libs) and install to /opt/libdragon
+      - name: Build & install libdragon snapshot to $N64_INST
         shell: bash
         run: |
           set -e
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          make -C /tmp/libdragon -j"$(nproc)"
 
-          # Install SDK bits to $N64_INST
-          sudo mkdir -p "$N64_INST"
-          sudo cp -a /tmp/libdragon/mips64-elf "$N64_INST"/
+          # Build with the cross toolchain
+          make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
 
-          # Also install top-level linker scripts if present
-          if [ -f /tmp/libdragon/n64.ld ]; then
-            sudo install -m 0644 /tmp/libdragon/n64.ld "$N64_INST"/mips64-elf/lib/n64.ld
-          fi
-          if [ -f /tmp/libdragon/rsp.ld ]; then
-            sudo install -m 0644 /tmp/libdragon/rsp.ld "$N64_INST"/mips64-elf/lib/rsp.ld
-          fi
+          # Install headers/libs/linker scripts into $N64_INST (this is what your Makefile needs)
+          sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
 
-          # Sanity check
+          # Sanity check the install
           test -f "$N64_INST/mips64-elf/lib/n64.ld"
           test -f "$N64_INST/mips64-elf/include/libdragon.h"
+          test -f "$N64_INST/mips64-elf/lib/libdragon.a"
+          test -f "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
       - name: Build & install libdragon tools (n64elfcompress, n64tool)
         shell: bash
         run: |
           set -e
-          # PATH from prior step is persisted via $GITHUB_PATH; export for safety
-          export PATH="/opt/libdragon/bin:$PATH"
+          export PATH="$N64_INST/bin:$PATH"
           make -C /tmp/libdragon/tools/n64elfcompress clean all
           make -C /tmp/libdragon/tools/n64tool        clean all
           sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
@@ -147,7 +143,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          export PATH="/opt/libdragon/bin:$PATH"
+          export PATH="$N64_INST/bin:$PATH"
           make distclean || true
 
           # Optional diagnostics if your Makefile has 'showpaths'
