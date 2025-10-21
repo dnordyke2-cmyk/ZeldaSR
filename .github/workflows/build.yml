@@ -99,7 +99,7 @@ jobs:
           test -f "$N64_INST/mips64-elf/lib/libdragon.a"
           test -f "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
-      - name: Build & install libdragon tools (n64elf2rom, n64elfcompress, n64tool, mkdfs)
+      - name: Build & install libdragon tools (n64elf2bin, n64elfcompress, n64tool, mkdfs)
         shell: bash
         run: |
           set -e
@@ -115,21 +115,23 @@ jobs:
             return 1
           }
 
-          N64ELF2ROM_BIN="$(find_tool n64elf2rom || true)"
-          N64ELFCOMPRESS_BIN="$(find_tool n64elfcompress)"
+          N64ELF2BIN_BIN="$(find_tool n64elf2bin || true)"
+          N64ELFCOMPRESS_BIN="$(find_tool n64elfcompress || true)"
           N64TOOL_BIN="$(find_tool n64tool)"
           MKDFS_BIN="$(find_tool mkdfs)"
 
-          # Install what we have (elf2rom may not exist on older snapshots)
-          if [ -n "$N64ELF2ROM_BIN" ]; then
-            sudo install -m 0755 "$N64ELF2ROM_BIN" "$N64_INST/bin/n64elf2rom"
+          # Install what we have (elf2bin is preferred; elfcompress is fallback)
+          if [ -n "$N64ELF2BIN_BIN" ]; then
+            sudo install -m 0755 "$N64ELF2BIN_BIN" "$N64_INST/bin/n64elf2bin"
           fi
-          sudo install -m 0755 "$N64ELFCOMPRESS_BIN" "$N64_INST/bin/n64elfcompress"
+          if [ -n "$N64ELFCOMPRESS_BIN" ]; then
+            sudo install -m 0755 "$N64ELFCOMPRESS_BIN" "$N64_INST/bin/n64elfcompress"
+          fi
           sudo install -m 0755 "$N64TOOL_BIN"        "$N64_INST/bin/n64tool"
           sudo install -m 0755 "$MKDFS_BIN"          "$N64_INST/bin/mkdfs"
 
           echo "Probing freshly built tools:"
-          command -v n64elf2rom     && n64elf2rom     --help | head -5 || true
+          command -v n64elf2bin     && n64elf2bin     --help | head -5 || true
           command -v n64elfcompress && n64elfcompress --help | head -5 || true
           command -v n64tool        && n64tool        --help | head -10 || true
           command -v mkdfs          && mkdfs          --help | head -5 || true
