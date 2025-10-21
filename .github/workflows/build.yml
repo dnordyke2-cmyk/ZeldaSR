@@ -18,11 +18,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install prerequisites
+        shell: bash
         run: |
+          set -e
           sudo apt-get update
-          sudo apt-get install -y curl ca-certificates jq build-essential git
+          sudo apt-get install -y curl ca-certificates jq build-essential git xxd
 
-      - name: Install mips64 toolchain (amd64)
+      - name: Install MIPS64 toolchain (.deb)
+        shell: bash
         run: |
           set -e
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
@@ -33,32 +36,48 @@ jobs:
           echo "Downloading toolchain: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
+          sudo mkdir -p "$N64_INST/bin"
+          echo "$N64_INST/bin" >> "$GITHUB_PATH"
 
-      - name: Build libdragon tools (n64tool, mkdfs, n64elfcompress)
+      - name: Build & install libdragon (core SDK: headers, libs, ld scripts)
+        shell: bash
         run: |
           set -e
-          # Grab a fresh libdragon and build only the tools
+          export PATH="$N64_INST/bin:$PATH"
+          rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          make -C /tmp/libdragon/tools
-          sudo install -m 0755 /tmp/libdragon/tools/n64tool         "$N64_INST/bin/n64tool"
-          sudo install -m 0755 /tmp/libdragon/tools/mkdfs/mkdfs      "$N64_INST/bin/mkdfs"
-          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
+          # Build and install the SDK (NOT just tools)
+          make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
+          sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
+          echo "Verifying core install:"
+          ls -l "$N64_INST/mips64-elf/lib/n64.ld"
+          ls -l "$N64_INST/mips64-elf/include/libdragon.h"
+          ls -l "$N64_INST/mips64-elf/lib/libdragon.a" "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
+      - name: Build & install libdragon tools (n64tool, mkdfs, n64elfcompress)
+        shell: bash
+        run: |
+          set -e
+          export PATH="$N64_INST/bin:$PATH"
+          make -C /tmp/libdragon/tools
+          sudo install -m 0755 /tmp/libdragon/tools/n64tool                          "$N64_INST/bin/n64tool"
+          sudo install -m 0755 /tmp/libdragon/tools/mkdfs/mkdfs                       "$N64_INST/bin/mkdfs"
+          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress     "$N64_INST/bin/n64elfcompress"
           echo "Tool sanity:"
           command -v mips64-elf-gcc
           command -v n64tool
           command -v mkdfs
           command -v n64elfcompress
-          ls -l "$N64_INST/mips64-elf/lib/n64.ld" "$N64_INST/mips64-elf/include/libdragon.h"
 
       - name: Build Shattered Realms
+        shell: bash
         run: |
           set -e
+          export PATH="$N64_INST/bin:$PATH"
           make -n showpaths >/dev/null 2>&1 && { echo '--- Makefile paths ---'; make showpaths; echo '----------------------'; } || true
           make clean all 2>&1 | tee build.log
           echo "Built files:"
           ls -l shattered_realms.* romfs.dfs || true
-          # Quick header peek if ROM was produced
           if [ -f shattered_realms.z64 ]; then
             echo "ROM header (16 bytes):"
             xxd -l 16 -g 1 shattered_realms.z64 || true
