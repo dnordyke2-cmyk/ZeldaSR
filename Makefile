@@ -1,16 +1,14 @@
 # ============================================================
 # Zelda: Shattered Realms — explicit build (no n64.mk)
-# - Compile -> Link -> Compress (auto-detect) -> Pack -> CRC -> Verify
-# - Avoids n64.mk variability that linked with zero objects in your log
+# Compile -> Link -> Compress (auto-detect) -> Pack -> CRC -> Verify
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
 MIPS_PREFIX ?= mips64-elf
 
-CC       := $(MIPS_PREFIX)-gcc
-CXX      := $(MIPS_PREFIX)-g++
-NM       := $(MIPS_PREFIX)-nm
-OBJCOPY  := $(MIPS_PREFIX)-objcopy
+CC      := $(MIPS_PREFIX)-gcc
+CXX     := $(MIPS_PREFIX)-g++
+NM      := $(MIPS_PREFIX)-nm
 
 N64ELFCOMPRESS := n64elfcompress
 N64TOOL        := n64tool
@@ -25,13 +23,11 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# ---- Minimal sources to PROVE boot first ----
-SOURCES := \
-  $(SRC_DIR)/main.c
+# ---- minimal sources to PROVE boot ----
+SOURCES := $(SRC_DIR)/main.c
+OBJS    := $(SOURCES:.c=.o)
 
-OBJS := $(SOURCES:.c=.o)
-
-# ---- Find headers/libs/linker script from libdragon install ----
+# ---- locate headers/libs/linker script ----
 DRAGON_INC    := $(firstword $(wildcard $(N64_INST)/mips64-elf/include) /n64_toolchain/mips64-elf/include)
 DRAGON_LIBDIR := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib)     /n64_toolchain/mips64-elf/lib)
 N64_LDSCRIPT  := $(firstword $(wildcard $(N64_INST)/mips64-elf/lib/n64.ld) /n64_toolchain/mips64-elf/lib/n64.ld)
@@ -49,42 +45,35 @@ endif
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections -I$(DRAGON_INC)
 LDFLAGS := -T $(N64_LDSCRIPT) -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys -Wl,--gc-sections
 
-.PHONY: all default clean distclean showpaths precheck fixcrc verifyrom
+.PHONY: all default clean distclean precheck fixcrc verifyrom
 
 all: default
 default: clean precheck $(ROM) verifyrom
 
-showpaths:
-	@echo "INC=$(DRAGON_INC)"
-	@echo "LIBDIR=$(DRAGON_LIBDIR)"
-	@echo "LDSCRIPT=$(N64_LDSCRIPT)"
-	@echo "CC=$(CC)"
-	@echo "SOURCES=$(SOURCES)"
-
-# Fail fast if main missing/duplicated
 precheck:
 	@set -e; \
+	echo "[TOOL] CC=$$(command -v $(CC))"; \
+	echo "[TOOL] CXX=$$(command -v $(CXX))"; \
 	test -f $(SRC_DIR)/main.c || { echo "ERROR: $(SRC_DIR)/main.c missing"; exit 1; }; \
 	COUNT=$$(grep -R --include='*.c' -n "^[[:space:]]*int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) 2>/dev/null | wc -l); \
 	if [ "$$COUNT" -eq 0 ]; then echo "ERROR: No int main(...) found under $(SRC_DIR)/"; exit 1; fi; \
 	if [ "$$COUNT" -gt 1 ]; then echo "ERROR: More than one file defines main()"; grep -R --include='*.c' -n "^[[:space:]]*int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) || true; exit 1; fi; \
-	echo "OK: exactly one main(). Forcing rebuild…"
+	echo "OK: exactly one main()."
 
 # Compile
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  [CC]  $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Link (ELF)
+# Link ELF
 $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Convert ELF -> BIN64 with robust arg-order detection
+# Compress ELF -> BIN64 (auto-detect arg order differences across runners)
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; rm -f "$(BIN64)"; \
-	# Try: INPUT then OUTPUT
 	if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then : ; else \
 	  if grep -q "error loading ELF file: $(BIN64)\|error opening input file: $(BIN64)" compress.err; then \
 	    echo "    Detected reversed arg order; retrying as: n64elfcompress OUTPUT INPUT"; \
@@ -95,10 +84,10 @@ $(BIN64): $(ELF)
 	fi; rm -f compress.err; \
 	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
 
-# DFS (safe even if empty)
+# ROM filesystem (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
-		echo "ROMFS is empty; creating placeholder readme.txt"; \
+		echo "ROMFS empty; creating placeholder"; \
 		printf "ROMFS placeholder.\n" > $(ASSETS_DIR)/readme.txt; \
 	fi
 	@echo "  [DFS] $(DFS)"
@@ -108,14 +97,13 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# Pack ROM: BIN64 first, then DFS, with TOC; then fix CRC
+# Pack ROM: BIN64 first (no offset), DFS aligned to 4 bytes; then CRC
 $(ROM): $(BIN64) $(DFS)
 	@echo "  [ROM] $(ROM)"
 	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
 	@if [ ! -s "$(ROM)" ]; then echo "ERROR: n64tool did not create $(ROM)"; exit 1; fi
 	@$(MAKE) -s fixcrc
 
-# CRC fix (best-effort)
 fixcrc:
 	@set -e; \
 	if command -v chksum64 >/dev/null 2>&1; then \
@@ -125,18 +113,17 @@ fixcrc:
 	elif command -v n64crc >/dev/null 2>&1; then \
 		echo "  [CRC] n64crc"; n64crc "$(ROM)"; \
 	else \
-		echo "[WARN] No checksum tool found; skipping CRC fix."; \
+		echo "[WARN] No checksum tool; skipping CRC fix."; \
 	fi
 
-# Sanity check ROM magic + print size
+# Verify ROM header & report size
 verifyrom:
 	@printf "  [MAGIC] "; xxd -l 4 -g 1 "$(ROM)" | awk 'NR==1{print $$2, $$3, $$4, $$5}'
 	@HEAD=$$(xxd -l 4 -p "$(ROM)"); \
 	if [ "$$HEAD" != "80371240" ]; then \
 		echo "ERROR: ROM magic $$HEAD != 80371240 (.z64 big-endian)"; exit 1; \
 	fi
-	@echo "  [SIZE] $$(wc -c < "$(ROM)") bytes"
-	@ls -lh "$(ROM)"
+	@echo "  [SIZE] $$(wc -c < "$(ROM)") bytes"; ls -lh "$(ROM)"
 
 clean:
 	@echo "  [CLEAN]"
