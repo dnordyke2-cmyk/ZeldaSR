@@ -10,6 +10,7 @@ CC      := $(MIPS_PREFIX)-gcc
 CXX     := $(MIPS_PREFIX)-g++
 NM      := $(MIPS_PREFIX)-nm
 
+# Tools (the workflow installs n64elf2rom under this name if needed)
 N64ELF2BIN     ?= n64elf2bin
 N64ELFCOMPRESS ?= n64elfcompress
 N64TOOL        ?= n64tool
@@ -25,6 +26,7 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
+# Keep sources minimal until boot confirmed
 SOURCES := $(SRC_DIR)/main.c
 OBJS    := $(SOURCES:.c=.o)
 
@@ -81,46 +83,45 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Produce BIN64 from ELF:
-#  1) Prefer n64elf2bin (or elf2rom installed under that name)
-#  2) Fallback to n64elfcompress single-arg (then search), then 2-arg orders
+# --- Robust ELF -> BIN64 rule (balanced if/fi and simple continuations) ---
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; \
 	if command -v $(N64ELF2BIN) >/dev/null 2>&1; then \
-	  echo "    TRY: n64elf2bin"; \
-	  ( $(N64ELF2BIN) "$(ELF)" -o "$(BIN64)" || \
-	    $(N64ELF2BIN) -o "$(BIN64)" "$(ELF)" || \
-	    $(N64ELF2BIN) "$(ELF)" "$(BIN64)" ); \
+		echo "    TRY: n64elf2bin"; \
+		$(N64ELF2BIN) "$(ELF)" -o "$(BIN64)" \
+		|| $(N64ELF2BIN) -o "$(BIN64)" "$(ELF)" \
+		|| $(N64ELF2BIN) "$(ELF)" "$(BIN64)"; \
 	else \
-	  echo "    n64elf2bin not found; using n64elfcompress fallbacks"; \
-	  rm -f "$(BIN64)"; \
-	  if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
-	    echo "    TRY: n64elfcompress (single-arg)"; \
-	    $(N64ELFCOMPRESS) "$(ELF)" || true; \
-	    # Look for any bin64 created anywhere newer than the ELF
-	    if [ ! -s "$(BIN64)" ]; then \
-	      CAND="$$(find . -type f -name '*.bin64' -newer '$(ELF)' -size +0c | head -n1)"; \
-	      if [ -n "$$CAND" ]; then echo "    Found produced BIN64 at $$CAND"; mv -f "$$CAND" "$(BIN64)"; fi; \
-	    fi; \
-	    if [ ! -s "$(BIN64)" ]; then \
-	      echo "    Single-arg mode didn’t produce $(BIN64); trying 2-arg fallbacks"; \
-	      if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
-	        if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)\|already compressed" compress.err; then \
-	          echo "    Detected incompatible/duplicate compress; retry reversed order"; \
-	          $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)" || true; \
-	        else \
-	          echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
-	        fi; \
-	      fi; rm -f compress.err; \
-	    fi; \
-	  else \
-	    echo "ERROR: neither n64elf2bin nor n64elfcompress found"; exit 1; \
-	  fi; \
+		echo "    n64elf2bin not found; using n64elfcompress fallbacks"; \
+		rm -f "$(BIN64)"; \
+		if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
+			echo "    TRY: n64elfcompress (single-arg)"; \
+			$(N64ELFCOMPRESS) "$(ELF)" || true; \
+			if [ ! -s "$(BIN64)" ]; then \
+				B="$$(basename "$(ELF)")"; \
+				[ -s "$${B}.bin64" ] && mv -f "$${B}.bin64" "$(BIN64)"; \
+			fi; \
+			if [ ! -s "$(BIN64)" ]; then \
+				echo "    Single-arg did not produce $(BIN64); trying 2-arg orders"; \
+				if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
+					if grep -qi "already compressed" compress.err || grep -qi "error opening input file: $(BIN64)" compress.err || grep -qi "error loading ELF file: $(BIN64)" compress.err; then \
+						echo "    Detected already-compressed / order issue; searching for any new *.bin64"; \
+						CAND="$$(find . -type f -name '*.bin64' -newer '$(ELF)' -size +0c | head -n1)"; \
+						if [ -n "$$CAND" ]; then echo "    Found BIN64 at $$CAND"; mv -f "$$CAND" "$(BIN64)"; fi; \
+					else \
+						echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
+					fi; \
+				fi; \
+				rm -f compress.err; \
+			fi; \
+		else \
+			echo "ERROR: neither n64elf2bin nor n64elfcompress found"; exit 1; \
+		fi; \
 	fi; \
-	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
+	if [ ! -s "$(BIN64)" ]; then echo "ERROR: $(BIN64) not produced"; exit 1; fi
 
-# ROMFS (safe if empty)
+# --- ROMFS ---
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
 		echo "ROMFS empty; creating placeholder"; \
@@ -133,7 +134,7 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# Always pack BIN64, never the ELF
+# --- ROM pack: always pack BIN64 (never the ELF) ---
 $(ROM): $(BIN64) $(DFS)
 	@echo "  [ROM] $(ROM)"
 	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
