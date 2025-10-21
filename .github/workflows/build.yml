@@ -34,31 +34,63 @@ jobs:
             | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
             | head -n1)
           [ -n "$DEB_URL" ] || { echo "Could not find toolchain .deb" >&2; exit 1; }
+          echo "Downloading: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
+          # Ensure canonical tool dir and get it on PATH for this and later steps
           sudo mkdir -p "$N64_INST/bin"
           export PATH="$N64_INST/bin:$PATH"
           echo "$N64_INST/bin" >> "$GITHUB_PATH"
 
-          # Ensure common cross tools are on PATH at the canonical location
+          # Idempotent linker: only create/replace the link if needed
           link_tool () {
-            local name="$1" found=""
+            local name="$1"
+            local dest="$N64_INST/bin/$name"
+            local found=""
+
+            # Locate the real binary (accept versioned suffixes too)
             if command -v "$name" >/dev/null 2>&1; then
               found="$(command -v "$name")"
             else
               for d in "$N64_INST/bin" /n64_toolchain/bin /usr/local/bin /usr/bin; do
-                [ -x "$d/$name" ] && { found="$d/$name"; break; }
-                # Also accept versioned names like mips64-elf-gcc-14.2.0
-                if compgen -G "$d/${name}-*" > /dev/null; then found="$(ls -1 "$d/${name}-*" | head -n1)"; break; fi
+                if [ -x "$d/$name" ]; then found="$d/$name"; break; fi
+                if compgen -G "$d/${name}-*" > /dev/null; then
+                  found="$(ls -1 "$d/${name}-*" | head -n1)"; break
+                fi
               done
             fi
-            [ -n "$found" ] && sudo ln -sf "$found" "$N64_INST/bin/$name"
+
+            [ -n "$found" ] || { echo "WARNING: $name not found"; return 0; }
+
+            # If dest already resolves to same real path, do nothing
+            if [ -e "$dest" ]; then
+              dest_real="$(readlink -f "$dest" || true)"
+              src_real="$(readlink -f "$found" || true)"
+              if [ -n "$dest_real" ] && [ -n "$src_real" ] && [ "$dest_real" = "$src_real" ]; then
+                echo "$name already set: $dest -> $src_real"
+                return 0
+              fi
+            fi
+
+            # If strings are literally identical, also no-op (avoids “same file” error)
+            if [ "$found" = "$dest" ]; then
+              echo "$name is already at $dest"
+              return 0
+            fi
+
+            echo "Linking $dest -> $found"
+            sudo ln -sfn "$found" "$dest"
           }
+
           for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip mips64-elf-nm; do
             link_tool "$t"
           done
 
+          echo "Toolchain contents in $N64_INST/bin:"
+          ls -l "$N64_INST/bin" || true
+
+          echo "Verifying key tools on PATH (now: $PATH):"
           command -v mips64-elf-gcc
           command -v mips64-elf-g++
           command -v mips64-elf-nm
@@ -70,12 +102,16 @@ jobs:
           export PATH="$N64_INST/bin:$PATH"
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
+
           make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
           sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
+
           test -f "$N64_INST/mips64-elf/lib/n64.ld"
           test -f "$N64_INST/mips64-elf/include/libdragon.h"
+          test -f "$N64_INST/mips64-elf/lib/libdragon.a"
+          test -f "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
-      - name: Build & install libdragon tools (install whatever exists)
+      - name: Build & install libdragon tools (install whatever exists; normalize to n64elf2bin)
         shell: bash
         run: |
           set -e
@@ -94,11 +130,12 @@ jobs:
           N64TL="$(find_tool n64tool || true)"
           MKDFS="$(find_tool mkdfs || true)"
 
-          # Install what we have; normalize converter name to n64elf2bin for Makefile
-          [ -n "$N64TL"  ] && sudo install -m 0755 "$N64TL"  "$N64_INST/bin/n64tool"
-          [ -n "$MKDFS"  ] && sudo install -m 0755 "$MKDFS"  "$N64_INST/bin/mkdfs"
+          # Install available tools
+          [ -n "$N64TL"   ] && sudo install -m 0755 "$N64TL"   "$N64_INST/bin/n64tool"
+          [ -n "$MKDFS"   ] && sudo install -m 0755 "$MKDFS"   "$N64_INST/bin/mkdfs"
           [ -n "$ELFCOMP" ] && sudo install -m 0755 "$ELFCOMP" "$N64_INST/bin/n64elfcompress"
 
+          # Normalize converter to the stable name n64elf2bin for the Makefile
           if [ -n "$ELF2BIN" ]; then
             sudo install -m 0755 "$ELF2BIN" "$N64_INST/bin/n64elf2bin"
           elif [ -n "$ELF2ROM" ]; then
@@ -117,12 +154,23 @@ jobs:
           set -e
           export PATH="$N64_INST/bin:$PATH"
           make distclean || true
-          make showpaths || true
+
+          if make -n showpaths >/dev/null 2>&1; then
+            echo "--- Makefile paths ---"
+            make showpaths
+            echo "----------------------"
+          fi
+
           make all 2>&1 | tee build.log
+
+          echo "Built files (if any):"
           ls -l shattered_realms.* romfs.dfs || true
+
           if [ -f shattered_realms.z64 ]; then
-            echo "Header:"; xxd -l 16 -g 1 shattered_realms.z64
-            echo "Size (bytes):"; wc -c < shattered_realms.z64
+            echo "ROM header (first 16 bytes):"
+            xxd -l 16 -g 1 shattered_realms.z64
+            echo "ROM size (bytes):"
+            wc -c < shattered_realms.z64
           fi
 
       - name: Upload artifacts
