@@ -41,47 +41,26 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
-          # Ensure bin dir exists
           sudo mkdir -p "$N64_INST/bin"
 
           # Create standard symlinks if the package only installed versioned binaries
           fix_link () {
             local name="$1"
             local dest="$N64_INST/bin/$name"
-            # If dest already executable, nothing to do
-            if [ -x "$dest" ]; then
-              echo "$name ok at $dest"
-              return 0
-            fi
-            # If it's somewhere on PATH already, link to it
+            if [ -x "$dest" ]; then echo "$name ok at $dest"; return 0; fi
             if command -v "$name" >/dev/null 2>&1; then
-              local existing
-              existing="$(command -v "$name")"
-              if [ "$existing" = "$dest" ]; then
-                echo "$name already at $dest"
-                return 0
-              fi
+              local existing; existing="$(command -v "$name")"
+              [ "$existing" = "$dest" ] && { echo "$name already at $dest"; return 0; }
               echo "Linking $name -> $existing"
-              sudo ln -sf "$existing" "$dest"
-              return 0
+              sudo ln -sf "$existing" "$dest"; return 0
             fi
-            # Search common dirs for versioned or unversioned binaries
             local found=""
             for d in "$N64_INST/bin" /n64_toolchain/bin /usr/local/bin /usr/bin; do
-              if compgen -G "$d/${name}-*" > /dev/null; then
-                found="$(ls -1 "$d/${name}-*" | head -n1)"
-                break
-              fi
-              if [ -x "$d/$name" ]; then
-                found="$d/$name"
-                break
-              fi
+              if compgen -G "$d/${name}-*" > /dev/null; then found="$(ls -1 "$d/${name}-*" | head -n1)"; break; fi
+              [ -x "$d/$name" ] && { found="$d/$name"; break; }
             done
             if [ -n "$found" ]; then
-              if [ "$found" = "$dest" ]; then
-                echo "$name already at $dest"
-                return 0
-              fi
+              [ "$found" = "$dest" ] && { echo "$name already at $dest"; return 0; }
               echo "Linking $name -> $found"
               sudo ln -sf "$found" "$dest"
             else
@@ -96,7 +75,6 @@ jobs:
           echo "Toolchain contents:"
           ls -l "$N64_INST/bin" || true
 
-          # Make tools visible now and later
           export PATH="$N64_INST/bin:$PATH"
           hash -r
           echo "$N64_INST/bin" >> "$GITHUB_PATH"
@@ -114,10 +92,8 @@ jobs:
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
 
-          # Build with the cross toolchain
+          # Build with the cross toolchain and install
           make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
-
-          # Install headers/libs/linker scripts into $N64_INST
           sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
 
           # Sanity check the install
@@ -126,50 +102,41 @@ jobs:
           test -f "$N64_INST/mips64-elf/lib/libdragon.a"
           test -f "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
-      - name: Build & install libdragon tools (n64elfcompress, n64tool)
+      - name: Build & install libdragon tools (n64elfcompress, n64tool, mkdfs)
         shell: bash
         run: |
           set -e
           export PATH="$N64_INST/bin:$PATH"
-
-          # Build all libdragon tools from the root (avoids missing 'clean' targets)
           make -C /tmp/libdragon -j"$(nproc)" tools
 
-          # Helper to resolve actual tool binary path (top-level or subdir)
+          # Resolve tool binary paths robustly (top-level or subdir)
           find_tool () {
-            local base="$1"            # e.g., n64tool or n64elfcompress
+            local base="$1"
             local root="/tmp/libdragon/tools"
-            if [ -f "$root/$base" ] && [ -x "$root/$base" ]; then
-              echo "$root/$base"
-              return 0
-            fi
-            if [ -f "$root/$base/$base" ] && [ -x "$root/$base/$base" ]; then
-              echo "$root/$base/$base"
-              return 0
-            fi
-            # last resort: search
-            local hit
-            hit=$(find "$root" -maxdepth 2 -type f -name "$base" -perm -111 | head -n1 || true)
-            if [ -n "$hit" ]; then
-              echo "$hit"
-              return 0
-            fi
+            if [ -f "$root/$base" ] && [ -x "$root/$base" ]; then echo "$root/$base"; return 0; fi
+            if [ -f "$root/$base/$base" ] && [ -x "$root/$base/$base" ]; then echo "$root/$base/$base"; return 0; fi
+            local hit; hit=$(find "$root" -maxdepth 2 -type f -name "$base" -perm -111 | head -n1 || true)
+            [ -n "$hit" ] && { echo "$hit"; return 0; }
             return 1
           }
 
           N64ELFCOMPRESS_BIN="$(find_tool n64elfcompress)" || { echo "ERROR: Could not locate built n64elfcompress"; exit 1; }
           N64TOOL_BIN="$(find_tool n64tool)"               || { echo "ERROR: Could not locate built n64tool"; exit 1; }
+          MKDFS_BIN="$(find_tool mkdfs)"                   || { echo "ERROR: Could not locate built mkdfs"; exit 1; }
 
           echo "Installing tools:"
           echo "  n64elfcompress -> $N64ELFCOMPRESS_BIN"
           echo "  n64tool        -> $N64TOOL_BIN"
+          echo "  mkdfs          -> $MKDFS_BIN"
 
           sudo install -m 0755 "$N64ELFCOMPRESS_BIN" "$N64_INST/bin/n64elfcompress"
           sudo install -m 0755 "$N64TOOL_BIN"        "$N64_INST/bin/n64tool"
+          sudo install -m 0755 "$MKDFS_BIN"          "$N64_INST/bin/mkdfs"
 
           echo "Probing freshly built tools:"
           command -v n64elfcompress && n64elfcompress --help | head -5 || true
           command -v n64tool        && n64tool --help        | head -10 || true
+          command -v mkdfs          && mkdfs --help          | head -5 || true
 
       - name: Build ROM
         shell: bash
@@ -178,7 +145,6 @@ jobs:
           export PATH="$N64_INST/bin:$PATH"
           make distclean || true
 
-          # Optional diagnostics if your Makefile has 'showpaths'
           if make -n showpaths >/dev/null 2>&1; then
             echo "--- Makefile paths ---"
             make showpaths
