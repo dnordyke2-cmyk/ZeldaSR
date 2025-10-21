@@ -1,7 +1,7 @@
 # ============================================================
 # Zelda: Shattered Realms — explicit build (no n64.mk)
-# Compile -> Link -> Compress (robust multi-try) -> Pack -> CRC -> Verify
-# Includes 'showpaths' for CI diagnostics.
+# Compile -> Link -> (ELF->ROM via n64tool OR ELF->BIN64->ROM) -> CRC -> Verify
+# Handles the "single-argument" n64elfcompress variant automatically.
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
@@ -10,11 +10,9 @@ MIPS_PREFIX ?= mips64-elf
 CC      := $(MIPS_PREFIX)-gcc
 CXX     := $(MIPS_PREFIX)-g++
 NM      := $(MIPS_PREFIX)-nm
-OBJCOPY := $(MIPS_PREFIX)-objcopy
 
 N64ELFCOMPRESS ?= n64elfcompress
-N64ELF2ROM    ?= n64elf2rom
-N64TOOL       ?= n64tool
+N64TOOL        ?= n64tool
 
 TITLE   := Shattered Realms
 ELF     := shattered_realms.elf
@@ -61,7 +59,7 @@ showpaths:
 	@echo "  NM  = $$(command -v $(NM)  || echo 'MISSING')"
 	@echo "TOOLS:"
 	@echo "  n64elfcompress = $$(command -v $(N64ELFCOMPRESS) || echo 'MISSING')"
-	@echo "  n64elf2rom     = $$(command -v $(N64ELF2ROM) || echo 'MISSING')"
+	@echo "  n64elf2rom     = $$(command -v n64elf2rom || echo 'MISSING')"
 	@echo "  n64tool        = $$(command -v $(N64TOOL) || echo 'MISSING')"
 	@echo "LIBDRAGON:"
 	@echo "  INC     = $(DRAGON_INC)"
@@ -88,26 +86,45 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Robust ELF -> BIN64:
-# Try in order:
-#   1) n64elfcompress -i ELF -o BIN64
-#   2) n64elfcompress ELF BIN64
-#   3) n64elfcompress BIN64 ELF
-#   4) n64elf2rom ELF BIN64
-#   5) n64elf2rom BIN64 ELF
+# Single-argument n64elfcompress support:
+# Many runners ship a variant that wants ONLY the ELF and writes <ELF>.bin64 next to it.
+define DO_SINGLE_ARG_COMPRESS
+rm -f "$(BIN64)"; \
+$(N64ELFCOMPRESS) "$(ELF)" || exit 1; \
+if [ ! -s "$(BIN64)" ]; then \
+  # Some builds write <basename>.bin64 with full input path – catch both
+  B="$$(basename "$(ELF)")"; \
+  if [ -s "$${B}.bin64" ]; then mv -f "$${B}.bin64" "$(BIN64)"; fi; \
+fi; \
+[ -s "$(BIN64)" ]
+endef
+
+# Produce BIN64 robustly:
+#  1) Try the single-argument variant (produces <ELF>.bin64)
+#  2) If that fails, try two-argument styles in both orders (older variants)
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
-	@set -e; rm -f "$(BIN64)"; \
-	try() { echo "    TRY: $$*"; "$$@"; }; \
-	ok()  { [ -s "$(BIN64)" ]; }; \
-	( try $(N64ELFCOMPRESS) -i "$(ELF)" -o "$(BIN64)" ) || true; \
-	ok || ( try $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" ) || true; \
-	ok || ( try $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)" ) || true; \
-	if ! ok && command -v $(N64ELF2ROM) >/dev/null 2>&1; then \
-	  ( try $(N64ELF2ROM) "$(ELF)" "$(BIN64)" ) || true; \
-	  ok || ( try $(N64ELF2ROM) "$(BIN64)" "$(ELF)" ) || true; \
-	fi; \
-	ok || { echo "ERROR: could not produce $(BIN64) with any known tool/ordering"; exit 1; }
+	@set -e; \
+	if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
+	  echo "    TRY: n64elfcompress (single-arg)"; \
+	  if ( $(DO_SINGLE_ARG_COMPRESS) ); then \
+	    echo "    OK: produced $(BIN64) via single-arg mode"; \
+	  else \
+	    echo "    Single-arg mode did not produce $(BIN64); trying 2-arg fallbacks"; \
+	    rm -f "$(BIN64)"; \
+	    if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
+	      if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)" compress.err; then \
+	        echo "    Detected reversed arg order; retrying as: n64elfcompress BIN64 ELF"; \
+	        $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)"; \
+	      else \
+	        echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
+	      fi; \
+	    fi; rm -f compress.err; \
+	    [ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; } \
+	  fi; \
+	else \
+	  echo "ERROR: n64elfcompress not found"; exit 1; \
+	fi
 
 # ROM filesystem (safe even if empty)
 $(DFS): | $(ASSETS_DIR)
@@ -122,12 +139,25 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# Pack ROM: BIN64 first (no offset), DFS aligned to 4 bytes; then CRC
-$(ROM): $(BIN64) $(DFS)
+# ---- Pack ROM:
+# First, try letting n64tool eat the ELF directly (newer toolchains).
+# If that fails, fall back to the BIN64 path we prepared above.
+$(ROM): $(ELF) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
-	@if [ ! -s "$(ROM)" ]; then echo "ERROR: n64tool did not create $(ROM)"; exit 1; fi
-	@$(MAKE) -s fixcrc
+	@set -e; \
+	ok_pack() { [ -s "$(ROM)" ]; }; \
+	rm -f "$(ROM)"; \
+	# Attempt 1: direct ELF -> ROM
+	echo "    TRY: n64tool (ELF directly)"; \
+	if $(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS) 2>pack.err; then :; fi; \
+	if ok_pack; then echo "    OK: packed ROM from ELF"; rm -f pack.err; $(MAKE) -s fixcrc; exit 0; fi; \
+	# Attempt 2: go through BIN64
+	echo "    Fallback: via BIN64"; \
+	$(MAKE) -s $(BIN64); \
+	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS); \
+	ok_pack || { echo "ERROR: n64tool did not create $(ROM)"; cat pack.err 2>/dev/null || true; exit 1; }; \
+	rm -f pack.err; \
+	$(MAKE) -s fixcrc
 
 # CRC fix (best-effort)
 fixcrc:
