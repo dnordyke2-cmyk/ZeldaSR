@@ -1,6 +1,7 @@
 # ============================================================
 # Zelda: Shattered Realms — explicit build (no n64.mk)
 # Compile -> Link -> Compress (auto-detect) -> Pack -> CRC -> Verify
+# Includes a 'showpaths' target for your workflow.
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
@@ -45,15 +46,26 @@ endif
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections -I$(DRAGON_INC)
 LDFLAGS := -T $(N64_LDSCRIPT) -L$(DRAGON_LIBDIR) -ldragon -lc -lm -ldragonsys -Wl,--gc-sections
 
-.PHONY: all default clean distclean precheck fixcrc verifyrom
+.PHONY: all default clean distclean precheck showpaths fixcrc verifyrom
 
 all: default
 default: clean precheck $(ROM) verifyrom
 
+# ---- diagnostics for CI ----
+showpaths:
+	@echo "TOOLCHAIN:"
+	@echo "  CC  = $$(command -v $(CC) || echo 'MISSING')"
+	@echo "  CXX = $$(command -v $(CXX) || echo 'MISSING')"
+	@echo "  NM  = $$(command -v $(NM)  || echo 'MISSING')"
+	@echo "LIBDRAGON:"
+	@echo "  INC     = $(DRAGON_INC)"
+	@echo "  LIBDIR  = $(DRAGON_LIBDIR)"
+	@echo "  LDSCRIPT= $(N64_LDSCRIPT)"
+	@echo "SOURCES = $(SOURCES)"
+
+# Fail fast if main missing/duplicated
 precheck:
 	@set -e; \
-	echo "[TOOL] CC=$$(command -v $(CC))"; \
-	echo "[TOOL] CXX=$$(command -v $(CXX))"; \
 	test -f $(SRC_DIR)/main.c || { echo "ERROR: $(SRC_DIR)/main.c missing"; exit 1; }; \
 	COUNT=$$(grep -R --include='*.c' -n "^[[:space:]]*int[[:space:]]\\+main[[:space:]]*(" $(SRC_DIR) 2>/dev/null | wc -l); \
 	if [ "$$COUNT" -eq 0 ]; then echo "ERROR: No int main(...) found under $(SRC_DIR)/"; exit 1; fi; \
