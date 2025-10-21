@@ -1,4 +1,4 @@
-name: Build ROM (explicit toolchain + fresh libdragon tools)
+name: Build ROM (stable converter)
 
 on:
   push:
@@ -15,17 +15,17 @@ jobs:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites
+      - name: Install prerequisites
         shell: bash
         run: |
           set -e
           sudo apt-get update
-          sudo apt-get install -y build-essential git curl xxd jq
+          sudo apt-get install -y build-essential git curl jq xxd
 
-      - name: Install MIPS64 toolchain (amd64 .deb) and expose binaries
+      - name: Install MIPS64 toolchain (.deb)
         shell: bash
         run: |
           set -e
@@ -34,115 +34,93 @@ jobs:
             | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
             | head -n1)
           [ -n "$DEB_URL" ] || { echo "Could not find toolchain .deb" >&2; exit 1; }
-          echo "Downloading: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
-          # Ensure canonical tool dir and get it on PATH for this and later steps
+          # Ensure canonical tool dir on PATH
           sudo mkdir -p "$N64_INST/bin"
-          export PATH="$N64_INST/bin:$PATH"
           echo "$N64_INST/bin" >> "$GITHUB_PATH"
+          export PATH="$N64_INST/bin:$PATH"
 
-          # Idempotent linker: only create/replace the link if needed
+          # Idempotent linking for common tools (skip if already same target)
           link_tool () {
-            local name="$1"
-            local dest="$N64_INST/bin/$name"
-            local found=""
-
-            # Locate the real binary (accept versioned suffixes too)
+            local name="$1"; local dest="$N64_INST/bin/$name"; local found=""
             if command -v "$name" >/dev/null 2>&1; then
               found="$(command -v "$name")"
             else
               for d in "$N64_INST/bin" /n64_toolchain/bin /usr/local/bin /usr/bin; do
-                if [ -x "$d/$name" ]; then found="$d/$name"; break; fi
+                [ -x "$d/$name" ] && { found="$d/$name"; break; }
                 if compgen -G "$d/${name}-*" > /dev/null; then
                   found="$(ls -1 "$d/${name}-*" | head -n1)"; break
                 fi
               done
             fi
-
-            [ -n "$found" ] || { echo "WARNING: $name not found"; return 0; }
-
-            # If dest already resolves to same real path, do nothing
+            [ -n "$found" ] || { echo "WARN: $name not found"; return 0; }
+            [ "$found" = "$dest" ] && { echo "$name already at $dest"; return 0; }
             if [ -e "$dest" ]; then
               dest_real="$(readlink -f "$dest" || true)"
               src_real="$(readlink -f "$found" || true)"
-              if [ -n "$dest_real" ] && [ -n "$src_real" ] && [ "$dest_real" = "$src_real" ]; then
-                echo "$name already set: $dest -> $src_real"
-                return 0
-              fi
+              [ -n "$dest_real" ] && [ "$dest_real" = "$src_real" ] && { echo "$name already set"; return 0; }
             fi
-
-            # If strings are literally identical, also no-op (avoids “same file” error)
-            if [ "$found" = "$dest" ]; then
-              echo "$name is already at $dest"
-              return 0
-            fi
-
             echo "Linking $dest -> $found"
             sudo ln -sfn "$found" "$dest"
           }
-
           for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip mips64-elf-nm; do
             link_tool "$t"
           done
 
-          echo "Toolchain contents in $N64_INST/bin:"
-          ls -l "$N64_INST/bin" || true
-
-          echo "Verifying key tools on PATH (now: $PATH):"
-          command -v mips64-elf-gcc
-          command -v mips64-elf-g++
-          command -v mips64-elf-nm
-
-      - name: Build & install libdragon snapshot to $N64_INST
+      - name: Build & install libdragon (trunk)
         shell: bash
         run: |
           set -e
           export PATH="$N64_INST/bin:$PATH"
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-
           make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
           sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
-
           test -f "$N64_INST/mips64-elf/lib/n64.ld"
           test -f "$N64_INST/mips64-elf/include/libdragon.h"
-          test -f "$N64_INST/mips64-elf/lib/libdragon.a"
-          test -f "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
-      - name: Build & install libdragon tools (install whatever exists; normalize to n64elf2bin)
+      - name: Build & install libdragon tools (trunk) + ensure n64elf2bin
         shell: bash
         run: |
           set -e
           export PATH="$N64_INST/bin:$PATH"
+
+          # Build all tools from trunk
           make -C /tmp/libdragon -j"$(nproc)" tools
 
-          # Helper to find a named tool anywhere under tools/
-          find_tool () {
-            local base="$1"
-            find /tmp/libdragon/tools -type f -name "$base" -perm -111 | head -n1
+          # Helper to copy a tool from the built tree, wherever it lives
+          copy_tool () {
+            local name="$1"
+            local found
+            found=$(find /tmp/libdragon/tools -type f -name "$name" -perm -111 | head -n1 || true)
+            [ -n "$found" ] && sudo install -m 0755 "$found" "$N64_INST/bin/$name"
           }
+          copy_tool n64tool
+          copy_tool mkdfs
+          copy_tool n64elfcompress
+          copy_tool n64elf2bin   # may not exist on some snapshots
+          copy_tool n64elf2rom   # older name; we’ll normalize next
 
-          ELF2BIN="$(find_tool n64elf2bin || true)"
-          ELF2ROM="$(find_tool n64elf2rom || true)"
-          ELFCOMP="$(find_tool n64elfcompress || true)"
-          N64TL="$(find_tool n64tool || true)"
-          MKDFS="$(find_tool mkdfs || true)"
-
-          # Install available tools
-          [ -n "$N64TL"   ] && sudo install -m 0755 "$N64TL"   "$N64_INST/bin/n64tool"
-          [ -n "$MKDFS"   ] && sudo install -m 0755 "$MKDFS"   "$N64_INST/bin/mkdfs"
-          [ -n "$ELFCOMP" ] && sudo install -m 0755 "$ELFCOMP" "$N64_INST/bin/n64elfcompress"
-
-          # Normalize converter to the stable name n64elf2bin for the Makefile
-          if [ -n "$ELF2BIN" ]; then
-            sudo install -m 0755 "$ELF2BIN" "$N64_INST/bin/n64elf2bin"
-          elif [ -n "$ELF2ROM" ]; then
-            sudo install -m 0755 "$ELF2ROM" "$N64_INST/bin/n64elf2bin"
+          # Normalize any converter to n64elf2bin
+          if ! command -v n64elf2bin >/dev/null 2>&1; then
+            if command -v n64elf2rom >/dev/null 2>&1; then
+              sudo ln -sfn "$(command -v n64elf2rom)" "$N64_INST/bin/n64elf2bin"
+            fi
           fi
 
-          echo "Tools present now:"
+          # If still missing, fetch preview tools just for n64elf2bin and build it
+          if ! command -v n64elf2bin >/dev/null 2>&1; then
+            echo "n64elf2bin missing; building from preview branch tools…"
+            rm -rf /tmp/libdragon_preview
+            git clone --depth=1 -b preview https://github.com/DragonMinded/libdragon.git /tmp/libdragon_preview
+            make -C /tmp/libdragon_preview/tools -j"$(nproc)"
+            found=$(find /tmp/libdragon_preview/tools -type f -name "n64elf2bin" -perm -111 | head -n1 || true)
+            [ -n "$found" ] && sudo install -m 0755 "$found" "$N64_INST/bin/n64elf2bin"
+          fi
+
+          echo "Tools on PATH now:"
           command -v n64tool        || true
           command -v mkdfs          || true
           command -v n64elfcompress || true
@@ -154,23 +132,14 @@ jobs:
           set -e
           export PATH="$N64_INST/bin:$PATH"
           make distclean || true
-
-          if make -n showpaths >/dev/null 2>&1; then
-            echo "--- Makefile paths ---"
-            make showpaths
-            echo "----------------------"
-          fi
-
+          make showpaths || true
           make all 2>&1 | tee build.log
 
-          echo "Built files (if any):"
+          echo "Built files:"
           ls -l shattered_realms.* romfs.dfs || true
-
           if [ -f shattered_realms.z64 ]; then
-            echo "ROM header (first 16 bytes):"
+            echo "ROM header:"
             xxd -l 16 -g 1 shattered_realms.z64
-            echo "ROM size (bytes):"
-            wc -c < shattered_realms.z64
           fi
 
       - name: Upload artifacts
@@ -180,6 +149,7 @@ jobs:
           path: |
             shattered_realms.z64
             shattered_realms.elf
+            shattered_realms.bin64
             romfs.dfs
             build.log
           if-no-files-found: error
