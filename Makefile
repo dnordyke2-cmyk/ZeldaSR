@@ -1,6 +1,6 @@
 # ============================================================
 # Zelda: Shattered Realms — stable build path
-# Compile -> Link -> ELF --(n64elfcompress)--> BIN64 --(n64tool)--> ROM
+# Compile -> Link -> ELF --(n64elf2rom / n64elfcompress)--> BIN64 --(n64tool)--> ROM
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
@@ -10,6 +10,7 @@ CC      := $(MIPS_PREFIX)-gcc
 CXX     := $(MIPS_PREFIX)-g++
 NM      := $(MIPS_PREFIX)-nm
 
+N64ELF2ROM     ?= n64elf2rom
 N64ELFCOMPRESS ?= n64elfcompress
 N64TOOL        ?= n64tool
 MKDFS          ?= mkdfs
@@ -24,7 +25,7 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# Keep only main.c until we confirm a good boot
+# Keep minimal sources until boot is confirmed
 SOURCES := $(SRC_DIR)/main.c
 OBJS    := $(SOURCES:.c=.o)
 
@@ -57,7 +58,7 @@ showpaths:
 	@echo "  NM  = $$(command -v $(NM)  || echo 'MISSING')"
 	@echo "TOOLS:"
 	@echo "  n64elfcompress = $$(command -v $(N64ELFCOMPRESS) || echo 'MISSING')"
-	@echo "  n64elf2rom     = $$(command -v n64elf2rom || echo 'MISSING')"
+	@echo "  n64elf2rom     = $$(command -v $(N64ELF2ROM) || echo 'MISSING')"
 	@echo "  n64tool        = $$(command -v $(N64TOOL) || echo 'MISSING')"
 	@echo "LIBDRAGON:"
 	@echo "  INC     = $(DRAGON_INC)"
@@ -81,40 +82,39 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Single-arg compressor helper: n64elfcompress <ELF> writes <ELF>.bin64
-define DO_SINGLE_ARG_COMPRESS
-rm -f "$(BIN64)"; \
-$(N64ELFCOMPRESS) "$(ELF)" || exit 1; \
-if [ ! -s "$(BIN64)" ]; then \
-  B="$$(basename "$(ELF)")"; \
-  [ -s "$${B}.bin64" ] && mv -f "$${B}.bin64" "$(BIN64)"; \
-fi; \
-[ -s "$(BIN64)" ]
-endef
-
+# Prefer n64elf2rom if available; it handles already-compressed ELFs gracefully.
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; \
-	if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
-	  echo "    TRY: n64elfcompress (single-arg)"; \
-	  if ( $(DO_SINGLE_ARG_COMPRESS) ); then \
-	    echo "    OK: produced $(BIN64) via single-arg mode"; \
-	  else \
-	    echo "    Single-arg mode didn’t produce $(BIN64); trying 2-arg fallbacks"; \
-	    rm -f "$(BIN64)"; \
-	    if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
-	      if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)" compress.err; then \
-	        echo "    Detected reversed arg order; retrying as: n64elfcompress BIN64 ELF"; \
-	        $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)"; \
-	      else \
-	        echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
-	      fi; \
-	    fi; rm -f compress.err; \
-	    [ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; } \
-	  fi; \
+	if command -v $(N64ELF2ROM) >/dev/null 2>&1; then \
+	  echo "    TRY: n64elf2rom"; \
+	  $(N64ELF2ROM) "$(ELF)" -o "$(BIN64)"; \
 	else \
-	  echo "ERROR: n64elfcompress not found"; exit 1; \
-	fi
+	  echo "    n64elf2rom not found; using n64elfcompress fallbacks"; \
+	  rm -f "$(BIN64)"; \
+	  if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
+	    echo "    TRY: n64elfcompress (single-arg)"; \
+	    $(N64ELFCOMPRESS) "$(ELF)" || true; \
+	    if [ ! -s "$(BIN64)" ]; then \
+	      B="$$(basename "$(ELF)")"; \
+	      [ -s "$${B}.bin64" ] && mv -f "$${B}.bin64" "$(BIN64)"; \
+	    fi; \
+	    if [ ! -s "$(BIN64)" ]; then \
+	      echo "    Single-arg mode didn’t produce $(BIN64); trying 2-arg fallbacks"; \
+	      if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
+	        if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)" compress.err; then \
+	          echo "    Detected reversed arg order; retrying as: n64elfcompress BIN64 ELF"; \
+	          $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)"; \
+	        else \
+	          echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
+	        fi; \
+	      fi; rm -f compress.err; \
+	    fi; \
+	  else \
+	    echo "ERROR: neither n64elf2rom nor n64elfcompress found"; exit 1; \
+	  fi; \
+	fi; \
+	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
 
 $(DFS): | $(ASSETS_DIR)
 	@if [ -z "$$(find $(ASSETS_DIR) -type f -not -name '.keep' -print -quit)" ]; then \
@@ -128,7 +128,7 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# *** IMPORTANT: Always pack BIN64, never the ELF ***
+# Always pack BIN64 (never ELF) to avoid “ELF header not found” at runtime
 $(ROM): $(BIN64) $(DFS)
 	@echo "  [ROM] $(ROM)"
 	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
