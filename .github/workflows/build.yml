@@ -12,7 +12,6 @@ jobs:
 
     env:
       N64_INST: /opt/libdragon
-      # We’ll append /opt/libdragon/bin to PATH after installing tools
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
@@ -42,31 +41,51 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
-          # Ensure bin dir exists and is added to PATH for later steps
+          # Ensure bin dir exists and add to PATH for subsequent steps
           sudo mkdir -p /opt/libdragon/bin
           echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
 
-          # Some package builds install only versioned binaries. Create standard symlinks if missing.
+          # Create standard symlinks if only versioned binaries exist
           fix_link () {
             local name="$1"
-            local found
-            if command -v "$name" >/dev/null 2>&1; then
-              echo "$name already available: $(command -v $name)"
+            local dest="/opt/libdragon/bin/$name"
+            # If dest already executable, nothing to do
+            if [ -x "$dest" ]; then
+              echo "$name ok at $dest"
               return 0
             fi
-            # Look for versioned binary in common locations
-            found=$(ls /opt/libdragon/bin/${name}-* 2>/dev/null | head -n1 || true)
-            if [ -z "$found" ]; then
-              found=$(ls /n64_toolchain/bin/${name}-* 2>/dev/null | head -n1 || true)
+            # If found on PATH elsewhere, link dest -> existing
+            if command -v "$name" >/dev/null 2>&1; then
+              local existing
+              existing="$(command -v "$name")"
+              if [ "$existing" = "$dest" ]; then
+                echo "$name already at $dest"
+                return 0
+              fi
+              echo "Linking $name -> $existing"
+              sudo ln -sf "$existing" "$dest"
+              return 0
             fi
-            if [ -z "$found" ]; then
-              for d in /opt/libdragon/bin /n64_toolchain/bin; do
-                if [ -x "$d/$name" ]; then found="$d/$name"; break; fi
-              done
-            fi
+            # Search for versioned or unversioned binaries in common dirs
+            local found=""
+            for d in /opt/libdragon/bin /n64_toolchain/bin /usr/local/bin /usr/bin; do
+              if compgen -G "$d/${name}-*" > /dev/null; then
+                found="$(ls -1 "$d/${name}-*" | head -n1)"
+                break
+              fi
+              if [ -x "$d/$name" ]; then
+                found="$d/$name"
+                break
+              fi
+            done
             if [ -n "$found" ]; then
+              # Avoid linking a file to itself
+              if [ "$found" = "$dest" ]; then
+                echo "$name already at $dest"
+                return 0
+              fi
               echo "Linking $name -> $found"
-              sudo ln -sf "$found" "/opt/libdragon/bin/$name"
+              sudo ln -sf "$found" "$dest"
             else
               echo "WARNING: Could not locate $name in expected dirs"
             fi
