@@ -1,6 +1,6 @@
 # ============================================================
 # Zelda: Shattered Realms — stable build path
-# Compile -> Link -> ELF --(n64elf2rom / n64elfcompress)--> BIN64 --(n64tool)--> ROM
+# Compile -> Link -> ELF --(n64elf2bin / n64elfcompress)--> BIN64 --(n64tool)--> ROM
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
@@ -10,7 +10,7 @@ CC      := $(MIPS_PREFIX)-gcc
 CXX     := $(MIPS_PREFIX)-g++
 NM      := $(MIPS_PREFIX)-nm
 
-N64ELF2ROM     ?= n64elf2rom
+N64ELF2BIN     ?= n64elf2bin
 N64ELFCOMPRESS ?= n64elfcompress
 N64TOOL        ?= n64tool
 MKDFS          ?= mkdfs
@@ -25,7 +25,6 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
-# Keep minimal sources until boot is confirmed
 SOURCES := $(SRC_DIR)/main.c
 OBJS    := $(SOURCES:.c=.o)
 
@@ -58,7 +57,7 @@ showpaths:
 	@echo "  NM  = $$(command -v $(NM)  || echo 'MISSING')"
 	@echo "TOOLS:"
 	@echo "  n64elfcompress = $$(command -v $(N64ELFCOMPRESS) || echo 'MISSING')"
-	@echo "  n64elf2rom     = $$(command -v $(N64ELF2ROM) || echo 'MISSING')"
+	@echo "  n64elf2bin     = $$(command -v $(N64ELF2BIN) || echo 'MISSING')"
 	@echo "  n64tool        = $$(command -v $(N64TOOL) || echo 'MISSING')"
 	@echo "LIBDRAGON:"
 	@echo "  INC     = $(DRAGON_INC)"
@@ -82,15 +81,18 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
-# Prefer n64elf2rom if available; it handles already-compressed ELFs gracefully.
+# Prefer n64elf2bin (handles already-compressed ELFs). Fallback to n64elfcompress variants.
 $(BIN64): $(ELF)
 	@echo "  [ELF->BIN64] $(BIN64)"
 	@set -e; \
-	if command -v $(N64ELF2ROM) >/dev/null 2>&1; then \
-	  echo "    TRY: n64elf2rom"; \
-	  $(N64ELF2ROM) "$(ELF)" -o "$(BIN64)"; \
+	if command -v $(N64ELF2BIN) >/dev/null 2>&1; then \
+	  echo "    TRY: n64elf2bin"; \
+	  # try common arg orders
+	  $(N64ELF2BIN) "$(ELF)" -o "$(BIN64)" 2>/dev/null || \
+	  $(N64ELF2BIN) -o "$(BIN64)" "$(ELF)" 2>/dev/null || \
+	  $(N64ELF2BIN) "$(ELF)" "$(BIN64)"; \
 	else \
-	  echo "    n64elf2rom not found; using n64elfcompress fallbacks"; \
+	  echo "    n64elf2bin not found; using n64elfcompress fallbacks"; \
 	  rm -f "$(BIN64)"; \
 	  if command -v $(N64ELFCOMPRESS) >/dev/null 2>&1; then \
 	    echo "    TRY: n64elfcompress (single-arg)"; \
@@ -102,16 +104,16 @@ $(BIN64): $(ELF)
 	    if [ ! -s "$(BIN64)" ]; then \
 	      echo "    Single-arg mode didn’t produce $(BIN64); trying 2-arg fallbacks"; \
 	      if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
-	        if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)" compress.err; then \
-	          echo "    Detected reversed arg order; retrying as: n64elfcompress BIN64 ELF"; \
-	          $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)"; \
+	        if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)\|already compressed" compress.err; then \
+	          echo "    Detected incompatible/duplicate compress; retry reversed order"; \
+	          $(N64ELFCOMPRESS) "$(BIN64)" "$(ELF)" || true; \
 	        else \
 	          echo "n64elfcompress failed:"; cat compress.err; rm -f compress.err; exit 1; \
 	        fi; \
 	      fi; rm -f compress.err; \
 	    fi; \
 	  else \
-	    echo "ERROR: neither n64elf2rom nor n64elfcompress found"; exit 1; \
+	    echo "ERROR: neither n64elf2bin nor n64elfcompress found"; exit 1; \
 	  fi; \
 	fi; \
 	[ -s "$(BIN64)" ] || { echo "ERROR: $(BIN64) not produced"; exit 1; }
@@ -128,7 +130,7 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-# Always pack BIN64 (never ELF) to avoid “ELF header not found” at runtime
+# Always pack BIN64
 $(ROM): $(BIN64) $(DFS)
 	@echo "  [ROM] $(ROM)"
 	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
