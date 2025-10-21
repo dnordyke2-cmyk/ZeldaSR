@@ -1,4 +1,4 @@
-name: Build ZeldaSR via libdragon n64.mk
+name: Build ROM (explicit toolchain + fresh libdragon tools)
 
 on:
   push:
@@ -9,69 +9,127 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     env:
       N64_INST: /opt/libdragon
-      PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # We'll append /opt/libdragon/bin to PATH after installing tools
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install prerequisites
+      - name: Install build prerequisites
         run: |
-          set -e
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git python3 pkg-config libpng-dev zlib1g-dev \
-            jq curl xxd
+          sudo apt-get install -y build-essential git curl xxd jq
 
-      - name: Install mips64-elf toolchain (arch-aware)
+      - name: Install MIPS64 toolchain (amd64 .deb)
+        shell: bash
         run: |
           set -e
-          ARCH="$(dpkg --print-architecture)"
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          ASSETS_JSON="$(curl -fsSL "$API")"
-          case "$ARCH" in
-            amd64) PATTERN='(x86_64|amd64)\.deb$' ;;
-            arm64) PATTERN='(aarch64|arm64)\.deb$' ;;
-            *) echo "Unsupported arch: $ARCH"; echo "$ASSETS_JSON" | jq -r '.assets[].name'; exit 1 ;;
-          esac
-          DEB_URL="$(echo "$ASSETS_JSON" | jq -r --arg re "$PATTERN" '.assets[] | select(.name | test($re)) | .browser_download_url' | head -n1)"
-          [ -n "$DEB_URL" ] || { echo "No toolchain .deb matched $PATTERN"; exit 1; }
+          DEB_URL=$(curl -fsSL "$API" \
+            | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
+            | head -n1)
+          if [ -z "$DEB_URL" ]; then
+            echo "ERROR: Could not find amd64 gcc-toolchain-mips64 .deb asset." >&2
+            exit 1
+          fi
+          echo "Downloading toolchain: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
-          sudo dpkg -i /tmp/n64-toolchain.deb || true
-          command -v mips64-elf-gcc || { echo "mips64-elf-gcc not in PATH"; exit 1; }
+          sudo dpkg -i /tmp/n64-toolchain.deb
 
-      - name: Build & install libdragon (headers, libs, tools)
+          # Confirm cross tools exist
+          command -v mips64-elf-gcc
+          command -v mips64-elf-g++
+
+          # Ensure /opt/libdragon/bin exists (dpkg usually creates it)
+          sudo mkdir -p /opt/libdragon/bin
+
+      - name: Build libdragon snapshot (headers/libs) and install to /opt/libdragon
+        shell: bash
         run: |
           set -e
+          rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          pushd /tmp/libdragon
-          ./build.sh
-          popd
-          # Ensure n64.mk is available where our Makefile expects it
-          if [ -f /tmp/libdragon/n64.mk ]; then
-            sudo cp /tmp/libdragon/n64.mk /opt/libdragon/n64.mk
-          fi
-          # Diagnostics
-          ls -l /opt/libdragon || true
-          ls -l /opt/libdragon/bin || true
-          command -v n64tool || { echo "n64tool missing after build.sh"; exit 1; }
-          command -v mkdfs   || { echo "mkdfs missing after build.sh"; exit 1; }
+          # Build libdragon using the installed cross toolchain
+          make -C /tmp/libdragon -j"$(nproc)"
 
-      - name: Build ZeldaSR
+          # Install SDK bits to $N64_INST
+          sudo mkdir -p "$N64_INST"
+          sudo cp -a /tmp/libdragon/mips64-elf "$N64_INST"/
+
+          # Some environments need the top-level linker scripts as well
+          if [ -f /tmp/libdragon/n64.ld ]; then
+            sudo install -m 0644 /tmp/libdragon/n64.ld "$N64_INST"/mips64-elf/lib/n64.ld
+          fi
+          if [ -f /tmp/libdragon/rsp.ld ]; then
+            sudo install -m 0644 /tmp/libdragon/rsp.ld "$N64_INST"/mips64-elf/lib/rsp.ld
+          fi
+
+          # Sanity check
+          test -f "$N64_INST/mips64-elf/lib/n64.ld"
+          test -f "$N64_INST/mips64-elf/include/libdragon.h"
+
+      - name: Build & install libdragon tools (n64elfcompress, n64tool)
+        shell: bash
+        run: |
+          set -e
+          make -C /tmp/libdragon/tools/n64elfcompress clean all
+          make -C /tmp/libdragon/tools/n64tool        clean all
+          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
+          sudo install -m 0755 /tmp/libdragon/tools/n64tool/n64tool                 "$N64_INST/bin/n64tool"
+          echo "$N64_INST/bin" >> "$GITHUB_PATH"
+
+          echo "Probing tools:"
+          command -v mips64-elf-gcc
+          command -v n64elfcompress
+          command -v n64tool
+
+      - name: Show tool & SDK paths (non-fatal)
+        shell: bash
+        run: |
+          echo "N64_INST=$N64_INST"
+          echo "PATH=$PATH"
+          command -v mips64-elf-gcc || true
+          command -v mips64-elf-g++ || true
+          command -v n64elfcompress || true
+          command -v n64tool || true
+          [ -f "$N64_INST/mips64-elf/lib/n64.ld" ] && echo "n64.ld OK" || echo "n64.ld MISSING"
+          [ -f "$N64_INST/mips64-elf/include/libdragon.h" ] && echo "libdragon.h OK" || echo "libdragon.h MISSING"
+
+      - name: Build ROM
+        shell: bash
         run: |
           set -e
           make distclean || true
-          echo "--- Makefile paths ---"
-          make showpaths
-          echo "----------------------"
+
+          # Optional diagnostics if your Makefile has 'showpaths'
+          if make -n showpaths >/dev/null 2>&1; then
+            echo "--- Makefile paths ---"
+            make showpaths
+            echo "----------------------"
+          fi
+
+          # Build everything and tee the full log
           make all 2>&1 | tee build.log
+
+          echo "Built files (if any):"
+          ls -l shattered_realms.* romfs.dfs || true
+
+          # Print ROM header and size if present
+          if [ -f shattered_realms.z64 ]; then
+            echo "ROM header (first 16 bytes):"
+            xxd -l 16 -g 1 shattered_realms.z64
+            echo "ROM size (bytes):"
+            wc -c < shattered_realms.z64
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zeldasr_n64mk
+          name: shattered_realms
           path: |
             shattered_realms.z64
             shattered_realms.elf
