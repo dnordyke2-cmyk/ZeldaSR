@@ -135,9 +135,37 @@ jobs:
           # Build all libdragon tools from the root (avoids missing 'clean' targets)
           make -C /tmp/libdragon -j"$(nproc)" tools
 
-          # IMPORTANT: Binaries are directly in /tmp/libdragon/tools/, not in subfolders
-          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress "$N64_INST/bin/n64elfcompress"
-          sudo install -m 0755 /tmp/libdragon/tools/n64tool        "$N64_INST/bin/n64tool"
+          # Helper to resolve actual tool binary path (top-level or subdir)
+          find_tool () {
+            local base="$1"            # e.g., n64tool or n64elfcompress
+            local root="/tmp/libdragon/tools"
+            if [ -f "$root/$base" ] && [ -x "$root/$base" ]; then
+              echo "$root/$base"
+              return 0
+            fi
+            if [ -f "$root/$base/$base" ] && [ -x "$root/$base/$base" ]; then
+              echo "$root/$base/$base"
+              return 0
+            fi
+            # last resort: search
+            local hit
+            hit=$(find "$root" -maxdepth 2 -type f -name "$base" -perm -111 | head -n1 || true)
+            if [ -n "$hit" ]; then
+              echo "$hit"
+              return 0
+            fi
+            return 1
+          }
+
+          N64ELFCOMPRESS_BIN="$(find_tool n64elfcompress)" || { echo "ERROR: Could not locate built n64elfcompress"; exit 1; }
+          N64TOOL_BIN="$(find_tool n64tool)"               || { echo "ERROR: Could not locate built n64tool"; exit 1; }
+
+          echo "Installing tools:"
+          echo "  n64elfcompress -> $N64ELFCOMPRESS_BIN"
+          echo "  n64tool        -> $N64TOOL_BIN"
+
+          sudo install -m 0755 "$N64ELFCOMPRESS_BIN" "$N64_INST/bin/n64elfcompress"
+          sudo install -m 0755 "$N64TOOL_BIN"        "$N64_INST/bin/n64tool"
 
           echo "Probing freshly built tools:"
           command -v n64elfcompress && n64elfcompress --help | head -5 || true
