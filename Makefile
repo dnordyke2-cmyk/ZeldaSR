@@ -1,7 +1,6 @@
 # ============================================================
-# Zelda: Shattered Realms — explicit build (no n64.mk)
-# Compile -> Link -> (ELF->ROM via n64tool OR ELF->BIN64->ROM) -> CRC -> Verify
-# Handles the "single-argument" n64elfcompress variant automatically.
+# Zelda: Shattered Realms — stable build path
+# Compile -> Link -> ELF --(n64elfcompress)--> BIN64 --(n64tool)--> ROM
 # ============================================================
 
 N64_INST    ?= /opt/libdragon
@@ -25,6 +24,7 @@ ROMSIZE := 2M
 SRC_DIR    := src
 ASSETS_DIR := assets/romfs
 
+# Keep only main.c until we confirm a good boot
 SOURCES := $(SRC_DIR)/main.c
 OBJS    := $(SOURCES:.c=.o)
 
@@ -81,12 +81,13 @@ $(ELF): $(OBJS)
 	@echo "  [LD]  $(ELF)"
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
+# Single-arg compressor helper: n64elfcompress <ELF> writes <ELF>.bin64
 define DO_SINGLE_ARG_COMPRESS
 rm -f "$(BIN64)"; \
 $(N64ELFCOMPRESS) "$(ELF)" || exit 1; \
 if [ ! -s "$(BIN64)" ]; then \
   B="$$(basename "$(ELF)")"; \
-  if [ -s "$${B}.bin64" ]; then mv -f "$${B}.bin64" "$(BIN64)"; fi; \
+  [ -s "$${B}.bin64" ] && mv -f "$${B}.bin64" "$(BIN64)"; \
 fi; \
 [ -s "$(BIN64)" ]
 endef
@@ -99,7 +100,7 @@ $(BIN64): $(ELF)
 	  if ( $(DO_SINGLE_ARG_COMPRESS) ); then \
 	    echo "    OK: produced $(BIN64) via single-arg mode"; \
 	  else \
-	    echo "    Single-arg mode did not produce $(BIN64); trying 2-arg fallbacks"; \
+	    echo "    Single-arg mode didn’t produce $(BIN64); trying 2-arg fallbacks"; \
 	    rm -f "$(BIN64)"; \
 	    if $(N64ELFCOMPRESS) "$(ELF)" "$(BIN64)" 2>compress.err; then :; else \
 	      if grep -qi "error opening input file: $(BIN64)\|error loading ELF file: $(BIN64)" compress.err; then \
@@ -127,20 +128,11 @@ $(ASSETS_DIR):
 	@mkdir -p $(ASSETS_DIR)
 	@touch $(ASSETS_DIR)/.keep
 
-$(ROM): $(ELF) $(DFS)
+# *** IMPORTANT: Always pack BIN64, never the ELF ***
+$(ROM): $(BIN64) $(DFS)
 	@echo "  [ROM] $(ROM)"
-	@set -e; \
-	ok_pack() { [ -s "$(ROM)" ]; }; \
-	rm -f "$(ROM)"; \
-	echo "    TRY: n64tool (ELF directly)"; \
-	if $(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(ELF)" -a 4 $(DFS) 2>pack.err; then :; fi; \
-	if ok_pack; then echo "    OK: packed ROM from ELF"; rm -f pack.err; $(MAKE) -s fixcrc; exit 0; fi; \
-	echo "    Fallback: via BIN64"; \
-	$(MAKE) -s $(BIN64); \
-	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS); \
-	ok_pack || { echo "ERROR: n64tool did not create $(ROM)"; cat pack.err 2>/dev/null || true; exit 1; }; \
-	rm -f pack.err; \
-	$(MAKE) -s fixcrc
+	$(N64TOOL) -l $(ROMSIZE) -t "$(TITLE)" -T -o "$(ROM)" "$(BIN64)" -a 4 $(DFS)
+	@$(MAKE) -s fixcrc
 
 fixcrc:
 	@set -e; \
