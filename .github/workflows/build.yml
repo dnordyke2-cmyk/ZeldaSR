@@ -135,9 +135,9 @@ jobs:
           # Build all libdragon tools from the root (avoids missing 'clean' targets)
           make -C /tmp/libdragon -j"$(nproc)" tools
 
-          # Install the two we need for packing
-          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
-          sudo install -m 0755 /tmp/libdragon/tools/n64tool/n64tool               "$N64_INST/bin/n64tool"
+          # IMPORTANT: Binaries are directly in /tmp/libdragon/tools/, not in subfolders
+          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress "$N64_INST/bin/n64elfcompress"
+          sudo install -m 0755 /tmp/libdragon/tools/n64tool        "$N64_INST/bin/n64tool"
 
           echo "Probing freshly built tools:"
           command -v n64elfcompress && n64elfcompress --help | head -5 || true
