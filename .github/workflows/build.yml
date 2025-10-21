@@ -41,8 +41,9 @@ jobs:
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
 
-          # Ensure bin dir exists and add to PATH for subsequent steps
+          # Ensure bin dir exists and add to PATH for *this* step and later steps
           sudo mkdir -p /opt/libdragon/bin
+          export PATH="/opt/libdragon/bin:$PATH"
           echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
 
           # Create standard symlinks if only versioned binaries exist
@@ -98,7 +99,7 @@ jobs:
           echo "Toolchain contents:"
           ls -l /opt/libdragon/bin || true
 
-          echo "Verifying key tools are executable on PATH:"
+          echo "Verifying key tools are executable on PATH (this step):"
           command -v mips64-elf-gcc
           command -v mips64-elf-g++
           command -v mips64-elf-nm
@@ -131,6 +132,8 @@ jobs:
         shell: bash
         run: |
           set -e
+          # PATH from prior step is persisted via $GITHUB_PATH; export for safety
+          export PATH="/opt/libdragon/bin:$PATH"
           make -C /tmp/libdragon/tools/n64elfcompress clean all
           make -C /tmp/libdragon/tools/n64tool        clean all
           sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
@@ -144,6 +147,7 @@ jobs:
         shell: bash
         run: |
           set -e
+          export PATH="/opt/libdragon/bin:$PATH"
           make distclean || true
 
           # Optional diagnostics if your Makefile has 'showpaths'
