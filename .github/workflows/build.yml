@@ -12,7 +12,7 @@ jobs:
 
     env:
       N64_INST: /opt/libdragon
-      # We'll append /opt/libdragon/bin to PATH after installing tools
+      # We’ll append /opt/libdragon/bin to PATH after installing tools
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
     steps:
@@ -20,68 +20,69 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build prerequisites
+        shell: bash
         run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y build-essential git curl xxd jq
 
       - name: Install MIPS64 toolchain (amd64 .deb) and expose binaries
         shell: bash
         run: |
-        set -e
-    API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-    DEB_URL=$(curl -fsSL "$API" \
-      | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
-      | head -n1)
-    if [ -z "$DEB_URL" ]; then
-      echo "ERROR: Could not find amd64 gcc-toolchain-mips64 .deb asset." >&2
-      exit 1
-    fi
-    echo "Downloading toolchain: $DEB_URL"
-    curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
-    sudo dpkg -i /tmp/n64-toolchain.deb
+          set -e
+          API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
+          DEB_URL=$(curl -fsSL "$API" \
+            | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
+            | head -n1)
+          if [ -z "$DEB_URL" ]; then
+            echo "ERROR: Could not find amd64 gcc-toolchain-mips64 .deb asset." >&2
+            exit 1
+          fi
+          echo "Downloading toolchain: $DEB_URL"
+          curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
+          sudo dpkg -i /tmp/n64-toolchain.deb
 
-    # Ensure bin dir exists and on PATH for later steps
-    sudo mkdir -p /opt/libdragon/bin
-    echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
+          # Ensure bin dir exists and is added to PATH for later steps
+          sudo mkdir -p /opt/libdragon/bin
+          echo "/opt/libdragon/bin" >> "$GITHUB_PATH"
 
-    # Some package builds install only versioned binaries. Create standard symlinks if missing.
-    fix_link () {
-      local name="$1"
-      local found
-      if command -v "$name" >/dev/null 2>&1; then
-        echo "$name already available: $(command -v $name)"
-        return 0
-      fi
-      # Look for versioned binary in common locations
-      found=$(ls /opt/libdragon/bin/${name}-* 2>/dev/null | head -n1 || true)
-      if [ -z "$found" ]; then
-        found=$(ls /n64_toolchain/bin/${name}-* 2>/dev/null | head -n1 || true)
-      fi
-      if [ -z "$found" ]; then
-        # Also try exact (unversioned) in these dirs
-        for d in /opt/libdragon/bin /n64_toolchain/bin; do
-          [ -x "$d/$name" ] && found="$d/$name" && break
-        done
-      fi
-      if [ -n "$found" ]; then
-        echo "Linking $name -> $found"
-        sudo ln -sf "$found" "/opt/libdragon/bin/$name"
-      else
-        echo "WARNING: Could not locate $name in expected dirs"
-      fi
-    }
+          # Some package builds install only versioned binaries. Create standard symlinks if missing.
+          fix_link () {
+            local name="$1"
+            local found
+            if command -v "$name" >/dev/null 2>&1; then
+              echo "$name already available: $(command -v $name)"
+              return 0
+            fi
+            # Look for versioned binary in common locations
+            found=$(ls /opt/libdragon/bin/${name}-* 2>/dev/null | head -n1 || true)
+            if [ -z "$found" ]; then
+              found=$(ls /n64_toolchain/bin/${name}-* 2>/dev/null | head -n1 || true)
+            fi
+            if [ -z "$found" ]; then
+              for d in /opt/libdragon/bin /n64_toolchain/bin; do
+                if [ -x "$d/$name" ]; then found="$d/$name"; break; fi
+              done
+            fi
+            if [ -n "$found" ]; then
+              echo "Linking $name -> $found"
+              sudo ln -sf "$found" "/opt/libdragon/bin/$name"
+            else
+              echo "WARNING: Could not locate $name in expected dirs"
+            fi
+          }
 
-    for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip mips64-elf-nm; do
-      fix_link "$t"
-    done
+          for t in mips64-elf-gcc mips64-elf-g++ mips64-elf-ar mips64-elf-ld mips64-elf-objcopy mips64-elf-objdump mips64-elf-ranlib mips64-elf-strip mips64-elf-nm; do
+            fix_link "$t"
+          done
 
-    echo "Toolchain contents:"
-    ls -l /opt/libdragon/bin || true
+          echo "Toolchain contents:"
+          ls -l /opt/libdragon/bin || true
 
-    echo "Verifying key tools are executable on PATH:"
-    command -v mips64-elf-gcc
-    command -v mips64-elf-g++
-    command -v mips64-elf-nm
+          echo "Verifying key tools are executable on PATH:"
+          command -v mips64-elf-gcc
+          command -v mips64-elf-g++
+          command -v mips64-elf-nm
 
       - name: Build libdragon snapshot (headers/libs) and install to /opt/libdragon
         shell: bash
@@ -89,14 +90,13 @@ jobs:
           set -e
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          # Build libdragon using the installed cross toolchain
           make -C /tmp/libdragon -j"$(nproc)"
 
           # Install SDK bits to $N64_INST
           sudo mkdir -p "$N64_INST"
           sudo cp -a /tmp/libdragon/mips64-elf "$N64_INST"/
 
-          # Some environments need the top-level linker scripts as well
+          # Also install top-level linker scripts if present
           if [ -f /tmp/libdragon/n64.ld ]; then
             sudo install -m 0644 /tmp/libdragon/n64.ld "$N64_INST"/mips64-elf/lib/n64.ld
           fi
@@ -116,24 +116,10 @@ jobs:
           make -C /tmp/libdragon/tools/n64tool        clean all
           sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress "$N64_INST/bin/n64elfcompress"
           sudo install -m 0755 /tmp/libdragon/tools/n64tool/n64tool                 "$N64_INST/bin/n64tool"
-          echo "$N64_INST/bin" >> "$GITHUB_PATH"
 
-          echo "Probing tools:"
-          command -v mips64-elf-gcc
-          command -v n64elfcompress
-          command -v n64tool
-
-      - name: Show tool & SDK paths (non-fatal)
-        shell: bash
-        run: |
-          echo "N64_INST=$N64_INST"
-          echo "PATH=$PATH"
-          command -v mips64-elf-gcc || true
-          command -v mips64-elf-g++ || true
-          command -v n64elfcompress || true
-          command -v n64tool || true
-          [ -f "$N64_INST/mips64-elf/lib/n64.ld" ] && echo "n64.ld OK" || echo "n64.ld MISSING"
-          [ -f "$N64_INST/mips64-elf/include/libdragon.h" ] && echo "libdragon.h OK" || echo "libdragon.h MISSING"
+          echo "Probing freshly built tools:"
+          command -v n64elfcompress && n64elfcompress --help | head -5 || true
+          command -v n64tool        && n64tool --help        | head -10 || true
 
       - name: Build ROM
         shell: bash
@@ -148,13 +134,11 @@ jobs:
             echo "----------------------"
           fi
 
-          # Build everything and tee the full log
           make all 2>&1 | tee build.log
 
           echo "Built files (if any):"
           ls -l shattered_realms.* romfs.dfs || true
 
-          # Print ROM header and size if present
           if [ -f shattered_realms.z64 ]; then
             echo "ROM header (first 16 bytes):"
             xxd -l 16 -g 1 shattered_realms.z64
