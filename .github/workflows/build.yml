@@ -6,21 +6,29 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # ✅ Force ALL steps to run inside the libdragon toolchain container.
+    container:
+      image: ghcr.io/dragonminded/libdragon:latest
+
+    env:
+      N64_INST: /opt/libdragon
+      PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Pull libdragon toolchain image
-        run: docker pull ghcr.io/dragonminded/libdragon:latest
-
-      - name: Build (inside container) + stamp revs
-        id: build
+      - name: Parse revision tokens from commit message
+        id: revs
         shell: bash
         run: |
           set -e
           COMMIT_MSG="$(git log -1 --pretty=%B | tr '\n' ' ')"
-          # Extract your per-file revs from the commit subject (fallbacks = 000)
-          # Expected patterns anywhere in the message: MF### for Makefile, BL### for build.yml, MC### for main.c
+          # Tokens anywhere in subject/body:
+          #   MF###  -> Makefile rev
+          #   BL###  -> build.yml rev
+          #   MC###  -> src/main.c rev
           MFREV=$(grep -oE 'MF[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/MF//') || true
           BLREV=$(grep -oE 'BL[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/BL//') || true
           MCREV=$(grep -oE 'MC[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/MC//') || true
@@ -28,40 +36,46 @@ jobs:
           SHORT_SHA="${GITHUB_SHA::7}"
 
           echo "Commit message: $COMMIT_MSG"
-          echo "Revisions: MF=$MFREV BL=$BLREV MC=$MCREV SHA=$SHORT_SHA"
+          echo "Revisions parsed: MF=$MFREV BL=$BLREV MC=$MCREV SHA=$SHORT_SHA"
 
-          # Export for later steps
           echo "MFREV=$MFREV" >> $GITHUB_OUTPUT
           echo "BLREV=$BLREV" >> $GITHUB_OUTPUT
           echo "MCREV=$MCREV" >> $GITHUB_OUTPUT
           echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
 
-          docker run --rm -v "$PWD":/work -w /work ghcr.io/dragonminded/libdragon:latest bash -lc '
-            set -e
-            export N64_INST=/opt/libdragon
-            export PATH="$N64_INST/bin:$PATH"
+      - name: Sanity check toolchain in container
+        run: |
+          set -e
+          which mips64-elf-gcc
+          mips64-elf-gcc --version | head -n 1
+          ls -l /opt/libdragon/bin
+          echo "Libdragon include dir:"
+          ls -d /opt/libdragon/mips64-elf/include || true
 
-            # Pass a short ROM title that fits the 20-char header, eg: "SR MF079 MC030"
-            TITLE="SR MF'${MFREV}' MC'${MCREV}'" \
-            make -n showpaths >/dev/null 2>&1 && { echo "--- Makefile paths ---"; make showpaths; echo "----------------------"; } || true
+      - name: Show Makefile paths
+        run: |
+          make -n showpaths >/dev/null 2>&1 && { echo '--- Makefile paths ---'; make showpaths; echo '----------------------'; } || true
 
-            TITLE="SR MF'${MFREV}' MC'${MCREV}'" \
-            make clean all 2>&1 | tee build.log || true
+      - name: Build (always produce build.log; stamp ROM title with revs)
+        run: |
+          set -e
+          export TITLE="SR MF${{ steps.revs.outputs.MFREV }} MC${{ steps.revs.outputs.MCREV }}"
+          # Clean + build; keep going to capture full log even on failure
+          ( make clean all TITLE="$TITLE" ) 2>&1 | tee build.log || true
 
-            echo "Built files:"
-            ls -l shattered_realms.* romfs.dfs || true
+          echo "Built files (post-build):"
+          ls -l shattered_realms.* romfs.dfs || true
 
-            if [ -f shattered_realms.z64 ]; then
-              echo "ROM header (16 bytes):"
-              xxd -l 16 -g 1 shattered_realms.z64 || true
-            fi
-          '
+          if [ -f shattered_realms.z64 ]; then
+            echo "ROM header (16 bytes):"
+            xxd -l 16 -g 1 shattered_realms.z64 || true
+          fi
 
-      - name: Upload build artifacts (always)
+      - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: n64-build-output-MF${{ steps.build.outputs.MFREV }}-BL${{ steps.build.outputs.BLREV }}-MC${{ steps.build.outputs.MCREV }}-${{ steps.build.outputs.SHORT_SHA }}
+          name: n64-build-output-MF${{ steps.revs.outputs.MFREV }}-BL${{ steps.revs.outputs.BLREV }}-MC${{ steps.revs.outputs.MCREV }}-${{ steps.revs.outputs.SHORT_SHA }}
           path: |
             build.log
             shattered_realms.z64
