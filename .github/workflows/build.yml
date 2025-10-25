@@ -3,12 +3,22 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Run all steps inside the libdragon toolchain image
     container:
       image: ghcr.io/dragonminded/libdragon:latest
+
+    # Default to bash for every run: block
+    defaults:
+      run:
+        shell: bash
 
     env:
       N64_INST: /opt/libdragon
@@ -18,14 +28,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # ensures 'git log -1' works reliably
+          fetch-depth: 2
 
       - name: Mark workspace as safe for Git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Parse revision tokens from commit message
         id: revs
-        shell: bash
         run: |
           set -e
           COMMIT_MSG="$(git log -1 --pretty=%B | tr '\n' ' ')"
@@ -41,19 +50,27 @@ jobs:
           echo "MCREV=$MCREV" >> $GITHUB_OUTPUT
           echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
 
-      - name: Sanity check toolchain in container
+      # 🔎 Make diagnostics NON-FATAL and very chatty
+      - name: Toolchain diagnostics (non-fatal)
+        continue-on-error: true
         run: |
-          set -e
-          which mips64-elf-gcc
-          mips64-elf-gcc --version | head -n 1
-          ls -l /opt/libdragon/bin
-          ls -d /opt/libdragon/mips64-elf/include || true
+          set +e
+          echo "=== /etc/os-release ==="; cat /etc/os-release || true
+          echo "=== uname -a ==="; uname -a || true
+          echo "=== env GITHUB_WORKSPACE ==="; echo "$GITHUB_WORKSPACE"
+          echo "=== PATH ==="; echo "$PATH"
+          echo "=== ls -l /opt ==="; ls -l /opt || true
+          echo "=== ls -l /opt/libdragon ==="; ls -l /opt/libdragon || true
+          echo "=== ls -l /opt/libdragon/bin ==="; ls -l /opt/libdragon/bin || true
+          echo "=== try to locate mips64-elf-gcc ==="
+          command -v mips64-elf-gcc && mips64-elf-gcc --version | head -n 1 || echo "mips64-elf-gcc NOT FOUND"
+          echo "=== include dir ==="; ls -ld /opt/libdragon/mips64-elf/include || true
 
       - name: Show Makefile paths
         run: |
           make -n showpaths >/dev/null 2>&1 && { echo '--- Makefile paths ---'; make showpaths; echo '----------------------'; } || true
 
-      - name: Build (always produce build.log; stamp ROM title with revs)
+      - name: Build (always log; stamp ROM title with MF/MC revs)
         run: |
           set -e
           export TITLE="SR MF${{ steps.revs.outputs.MFREV }} MC${{ steps.revs.outputs.MCREV }}"
