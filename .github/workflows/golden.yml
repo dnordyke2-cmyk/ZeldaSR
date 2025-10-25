@@ -1,0 +1,46 @@
+name: n64-golden
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dragonminded/libdragon:latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      N64_INST: /opt/libdragon
+      PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain sanity
+        run: |
+          set -e
+          command -v mips64-elf-gcc
+          mips64-elf-gcc --version | head -n1
+          command -v n64elfcompress
+          command -v n64tool
+      - name: Golden build (manual compile/link)
+        run: |
+          set -e
+          mkdir -p out
+          mips64-elf-gcc -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
+            -I"$N64_INST/mips64-elf/include" -c src/main.c -o out/main.o
+          mips64-elf-gcc -o out/shattered_realms.elf out/main.o \
+            -T "$N64_INST/mips64-elf/lib/n64.ld" -Wl,--gc-sections -L"$N64_INST/mips64-elf/lib" \
+            -ldragon -lc -lm -ldragonsys
+          n64elfcompress out/shattered_realms.bin out/shattered_realms.elf     # OUT then IN
+          n64tool -l 2M -t "SR GOLDEN" -h "$N64_INST/mips64-elf/lib/header" \
+            -o out/shattered_realms.z64 out/shattered_realms.bin
+          xxd -l 16 -g 1 out/shattered_realms.z64
+      - name: Upload golden artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: n64-golden
+          path: out/
