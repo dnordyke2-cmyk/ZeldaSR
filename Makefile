@@ -1,16 +1,10 @@
-# Libdragon Makefile (v4) — robust CC detection + correct link/compress order
+# Libdragon Makefile (v5): discover tools on PATH; no hard-coded /opt paths
 N64_INST ?= /opt/libdragon
 
-# Auto-detect compiler: prefer PATH, else fall back to N64_INST
-CC_PATH := $(shell command -v mips64-elf-gcc 2>/dev/null)
-ifdef CC_PATH
-  CC := mips64-elf-gcc
-else
-  CC := $(N64_INST)/bin/mips64-elf-gcc
-endif
-
-N64TOOL     := $(N64_INST)/bin/n64tool
-ELFCOMPRESS := $(N64_INST)/bin/n64elfcompress
+# Prefer PATH tools; fall back to N64_INST if missing
+CC          ?= $(or $(shell command -v mips64-elf-gcc 2>/dev/null),$(N64_INST)/bin/mips64-elf-gcc)
+N64TOOL     ?= $(or $(shell command -v n64tool 2>/dev/null),$(N64_INST)/bin/n64tool)
+ELFCOMPRESS ?= $(or $(shell command -v n64elfcompress 2>/dev/null),$(N64_INST)/bin/n64elfcompress)
 
 # Allow CI to override ROM title (≤20 chars)
 TITLE ?= SHAT REALMS
@@ -31,7 +25,7 @@ all: $(TARGET).z64
 $(TARGET).elf: $(OBJECTS)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-# CORRECT arg order for n64elfcompress: OUT first, IN second
+# Correct n64elfcompress order: OUT then IN
 $(TARGET).bin: $(TARGET).elf
 	$(ELFCOMPRESS) $@ $<
 
