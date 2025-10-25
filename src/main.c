@@ -2,37 +2,31 @@
 #include <stdio.h>
 
 int main(void) {
-    /* Init video and a double-buffered display */
-    display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_NONE);
+    /* Video: 320x240, 16bpp, double-buffered */
+    display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_OFF);
 
-    /* Init console and route printf() to the on-screen console */
+    /* Console routed to printf */
     console_init();
     console_set_debug(true);
 
-    /* Optional: init the modern input API (only needed if you read input) */
-    // joypad_init();
-
+    debugf("Boot: entering main loop\n");
     printf("Shattered Realms booted!\n");
-    printf("Libdragon console is active. \\o/\n");
+    printf("If you can read this, the display & console are working.\n");
 
     while (1) {
-        /* Wait for a free framebuffer */
-        display_context_t disp = 0;
-        while (!(disp = display_lock())) {
-            /* If you prefer non-blocking, use display_try_lock()
-               and do something else when it returns 0. */
-        }
+        /* Grab a free framebuffer (blocks until one is available) */
+        surface_t *disp = display_get();
 
-        /* (Optional) clear the background; 0 = black */
+        /* Clear to black */
         graphics_fill_screen(disp, 0);
 
-        /* Draw the console contents into this framebuffer */
+        /* Draw console buffer */
         console_render(disp);
 
-        /* Present the frame */
+        /* Present frame */
         display_show(disp);
 
-        /* Simple throttling to avoid a hot loop (about ~60 fps anyway) */
+        /* ~60 fps pacing */
         wait_ms(16);
     }
 
