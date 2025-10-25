@@ -1,11 +1,18 @@
-# Minimal, known-good Makefile for a libdragon app
+# Libdragon Makefile (v4) — robust CC detection + correct link/compress order
 N64_INST ?= /opt/libdragon
 
-CC          := $(N64_INST)/bin/mips64-elf-gcc
+# Auto-detect compiler: prefer PATH, else fall back to N64_INST
+CC_PATH := $(shell command -v mips64-elf-gcc 2>/dev/null)
+ifdef CC_PATH
+  CC := mips64-elf-gcc
+else
+  CC := $(N64_INST)/bin/mips64-elf-gcc
+endif
+
 N64TOOL     := $(N64_INST)/bin/n64tool
 ELFCOMPRESS := $(N64_INST)/bin/n64elfcompress
 
-# Allow CI to override the ROM title (<=20 chars recommended)
+# Allow CI to override ROM title (≤20 chars)
 TITLE ?= SHAT REALMS
 
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
@@ -24,7 +31,7 @@ all: $(TARGET).z64
 $(TARGET).elf: $(OBJECTS)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-# NOTE: Correct arg order: OUT first, then IN.
+# CORRECT arg order for n64elfcompress: OUT first, IN second
 $(TARGET).bin: $(TARGET).elf
 	$(ELFCOMPRESS) $@ $<
 
