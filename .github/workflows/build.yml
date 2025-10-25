@@ -22,24 +22,50 @@ jobs:
         run: |
           set -e
           sudo apt-get update
-          sudo apt-get install -y curl ca-certificates jq build-essential git xxd
+          sudo apt-get install -y build-essential git curl jq xxd ca-certificates
 
+      # Print key files into the log so we can review exact contents
+      - name: Print key files to log
+        shell: bash
+        run: |
+          set -e
+          echo "===== repo tree (depth 3) ====="
+          (command -v tree && tree -a -L 3 || (ls -la; find . -maxdepth 3 -type f | sort)) || true
+
+          echo "===== .github/workflows/build.yml ====="
+          sed -n '1,400p' .github/workflows/build.yml || true
+
+          echo "===== Makefile ====="
+          sed -n '1,400p' Makefile || true
+
+          echo "===== src/main.c ====="
+          sed -n '1,400p' src/main.c || true
+
+          echo "===== other sources ====="
+          for f in src/*.c src/*.h; do
+            [ "$f" = "src/main.c" ] && continue
+            echo "----- $f -----"
+            sed -n '1,400p' "$f"
+          done
+
+      # Install official mips64 toolchain (amd64) via .deb
       - name: Install MIPS64 toolchain (.deb)
         shell: bash
         run: |
           set -e
           API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          DEB_URL=$(curl -fsSL "$API" \
-            | jq -r '.assets[] | select(.name | test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' \
-            | head -n1)
-          [ -n "$DEB_URL" ] || { echo "Toolchain .deb not found"; exit 1; }
+          DEB_URL=$(curl -fsSL "$API" | jq -r '.assets[] | select(.name|test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' | head -n1)
+          if [ -z "$DEB_URL" ]; then
+            echo "Toolchain .deb not found in release"; exit 1
+          fi
           echo "Downloading toolchain: $DEB_URL"
           curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
           sudo dpkg -i /tmp/n64-toolchain.deb
           sudo mkdir -p "$N64_INST/bin"
           echo "$N64_INST/bin" >> "$GITHUB_PATH"
 
-      - name: Build & install libdragon (SDK: headers, libs, ld scripts)
+      # Build & install libdragon core SDK (headers, libs, n64.ld)
+      - name: Build & install libdragon (SDK)
         shell: bash
         run: |
           set -e
@@ -53,7 +79,8 @@ jobs:
           ls -l "$N64_INST/mips64-elf/include/libdragon.h"
           ls -l "$N64_INST/mips64-elf/lib/libdragon.a" "$N64_INST/mips64-elf/lib/libdragonsys.a"
 
-      - name: Build & install libdragon tools (n64tool, mkdfs, n64elfcompress)
+      # Build & install tools we need for packaging
+      - name: Build & install libdragon tools
         shell: bash
         run: |
           set -e
@@ -62,12 +89,13 @@ jobs:
           sudo install -m 0755 /tmp/libdragon/tools/n64tool                          "$N64_INST/bin/n64tool"
           sudo install -m 0755 /tmp/libdragon/tools/mkdfs/mkdfs                       "$N64_INST/bin/mkdfs"
           sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress     "$N64_INST/bin/n64elfcompress"
-          echo "Tool sanity:"
+          echo "Tool sanity on PATH:"
           command -v mips64-elf-gcc
           command -v n64tool
           command -v mkdfs
           command -v n64elfcompress
 
+      # Build your ROM
       - name: Build Shattered Realms
         shell: bash
         run: |
