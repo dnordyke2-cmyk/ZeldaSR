@@ -46,7 +46,6 @@ jobs:
           export PATH="$N64_INST/bin:$PATH"
           rm -rf /tmp/libdragon
           git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          # Build and install the SDK (NOT just tools)
           make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
           sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
           echo "Verifying core install:"
