@@ -7,7 +7,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # ✅ Force ALL steps to run inside the libdragon toolchain container.
     container:
       image: ghcr.io/dragonminded/libdragon:latest
 
@@ -18,6 +17,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # ensures 'git log -1' works reliably
+
+      - name: Mark workspace as safe for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Parse revision tokens from commit message
         id: revs
@@ -25,19 +29,13 @@ jobs:
         run: |
           set -e
           COMMIT_MSG="$(git log -1 --pretty=%B | tr '\n' ' ')"
-          # Tokens anywhere in subject/body:
-          #   MF###  -> Makefile rev
-          #   BL###  -> build.yml rev
-          #   MC###  -> src/main.c rev
           MFREV=$(grep -oE 'MF[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/MF//') || true
           BLREV=$(grep -oE 'BL[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/BL//') || true
           MCREV=$(grep -oE 'MC[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/MC//') || true
           MFREV=${MFREV:-000}; BLREV=${BLREV:-000}; MCREV=${MCREV:-000}
           SHORT_SHA="${GITHUB_SHA::7}"
-
           echo "Commit message: $COMMIT_MSG"
           echo "Revisions parsed: MF=$MFREV BL=$BLREV MC=$MCREV SHA=$SHORT_SHA"
-
           echo "MFREV=$MFREV" >> $GITHUB_OUTPUT
           echo "BLREV=$BLREV" >> $GITHUB_OUTPUT
           echo "MCREV=$MCREV" >> $GITHUB_OUTPUT
@@ -49,7 +47,6 @@ jobs:
           which mips64-elf-gcc
           mips64-elf-gcc --version | head -n 1
           ls -l /opt/libdragon/bin
-          echo "Libdragon include dir:"
           ls -d /opt/libdragon/mips64-elf/include || true
 
       - name: Show Makefile paths
@@ -60,12 +57,9 @@ jobs:
         run: |
           set -e
           export TITLE="SR MF${{ steps.revs.outputs.MFREV }} MC${{ steps.revs.outputs.MCREV }}"
-          # Clean + build; keep going to capture full log even on failure
           ( make clean all TITLE="$TITLE" ) 2>&1 | tee build.log || true
-
           echo "Built files (post-build):"
           ls -l shattered_realms.* romfs.dfs || true
-
           if [ -f shattered_realms.z64 ]; then
             echo "ROM header (16 bytes):"
             xxd -l 16 -g 1 shattered_realms.z64 || true
