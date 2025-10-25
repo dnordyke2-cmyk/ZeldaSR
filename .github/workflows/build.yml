@@ -1,122 +1,71 @@
-name: Build ROM (libdragon toolchain)
-
+name: n64-build
 on:
   push:
-    branches: [ main ]
   pull_request:
-  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      N64_INST: /opt/libdragon
-      PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install prerequisites
+      - name: Pull libdragon toolchain image
+        run: docker pull ghcr.io/dragonminded/libdragon:latest
+
+      - name: Build (inside container) + stamp revs
+        id: build
         shell: bash
         run: |
           set -e
-          sudo apt-get update
-          sudo apt-get install -y build-essential git curl jq xxd ca-certificates
+          COMMIT_MSG="$(git log -1 --pretty=%B | tr '\n' ' ')"
+          # Extract your per-file revs from the commit subject (fallbacks = 000)
+          # Expected patterns anywhere in the message: MF### for Makefile, BL### for build.yml, MC### for main.c
+          MFREV=$(grep -oE 'MF[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/MF//') || true
+          BLREV=$(grep -oE 'BL[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/BL//') || true
+          MCREV=$(grep -oE 'MC[0-9]{3}' <<<"$COMMIT_MSG" | tail -n1 | sed 's/MC//') || true
+          MFREV=${MFREV:-000}; BLREV=${BLREV:-000}; MCREV=${MCREV:-000}
+          SHORT_SHA="${GITHUB_SHA::7}"
 
-      # Print key files into the log so we can review exact contents
-      - name: Print key files to log
-        shell: bash
-        run: |
-          set -e
-          echo "===== repo tree (depth 3) ====="
-          (command -v tree && tree -a -L 3 || (ls -la; find . -maxdepth 3 -type f | sort)) || true
+          echo "Commit message: $COMMIT_MSG"
+          echo "Revisions: MF=$MFREV BL=$BLREV MC=$MCREV SHA=$SHORT_SHA"
 
-          echo "===== .github/workflows/build.yml ====="
-          sed -n '1,400p' .github/workflows/build.yml || true
+          # Export for later steps
+          echo "MFREV=$MFREV" >> $GITHUB_OUTPUT
+          echo "BLREV=$BLREV" >> $GITHUB_OUTPUT
+          echo "MCREV=$MCREV" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
 
-          echo "===== Makefile ====="
-          sed -n '1,400p' Makefile || true
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/dragonminded/libdragon:latest bash -lc '
+            set -e
+            export N64_INST=/opt/libdragon
+            export PATH="$N64_INST/bin:$PATH"
 
-          echo "===== src/main.c ====="
-          sed -n '1,400p' src/main.c || true
+            # Pass a short ROM title that fits the 20-char header, eg: "SR MF079 MC030"
+            TITLE="SR MF'${MFREV}' MC'${MCREV}'" \
+            make -n showpaths >/dev/null 2>&1 && { echo "--- Makefile paths ---"; make showpaths; echo "----------------------"; } || true
 
-          echo "===== other sources ====="
-          for f in src/*.c src/*.h; do
-            [ "$f" = "src/main.c" ] && continue
-            echo "----- $f -----"
-            sed -n '1,400p' "$f"
-          done
+            TITLE="SR MF'${MFREV}' MC'${MCREV}'" \
+            make clean all 2>&1 | tee build.log || true
 
-      # Install official mips64 toolchain (amd64) via .deb
-      - name: Install MIPS64 toolchain (.deb)
-        shell: bash
-        run: |
-          set -e
-          API="https://api.github.com/repos/DragonMinded/libdragon/releases/tags/toolchain-continuous-prerelease"
-          DEB_URL=$(curl -fsSL "$API" | jq -r '.assets[] | select(.name|test("gcc-toolchain-mips64-.*amd64\\.deb$")) | .browser_download_url' | head -n1)
-          if [ -z "$DEB_URL" ]; then
-            echo "Toolchain .deb not found in release"; exit 1
-          fi
-          echo "Downloading toolchain: $DEB_URL"
-          curl -fsSL "$DEB_URL" -o /tmp/n64-toolchain.deb
-          sudo dpkg -i /tmp/n64-toolchain.deb
-          sudo mkdir -p "$N64_INST/bin"
-          echo "$N64_INST/bin" >> "$GITHUB_PATH"
+            echo "Built files:"
+            ls -l shattered_realms.* romfs.dfs || true
 
-      # Build & install libdragon core SDK (headers, libs, n64.ld)
-      - name: Build & install libdragon (SDK)
-        shell: bash
-        run: |
-          set -e
-          export PATH="$N64_INST/bin:$PATH"
-          rm -rf /tmp/libdragon
-          git clone --depth=1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-          make -C /tmp/libdragon -j"$(nproc)" N64_INST="$N64_INST"
-          sudo make -C /tmp/libdragon install N64_INST="$N64_INST"
-          echo "Verify core install:"
-          ls -l "$N64_INST/mips64-elf/lib/n64.ld"
-          ls -l "$N64_INST/mips64-elf/include/libdragon.h"
-          ls -l "$N64_INST/mips64-elf/lib/libdragon.a" "$N64_INST/mips64-elf/lib/libdragonsys.a"
+            if [ -f shattered_realms.z64 ]; then
+              echo "ROM header (16 bytes):"
+              xxd -l 16 -g 1 shattered_realms.z64 || true
+            fi
+          '
 
-      # Build & install tools we need for packaging
-      - name: Build & install libdragon tools
-        shell: bash
-        run: |
-          set -e
-          export PATH="$N64_INST/bin:$PATH"
-          make -C /tmp/libdragon/tools
-          sudo install -m 0755 /tmp/libdragon/tools/n64tool                          "$N64_INST/bin/n64tool"
-          sudo install -m 0755 /tmp/libdragon/tools/mkdfs/mkdfs                       "$N64_INST/bin/mkdfs"
-          sudo install -m 0755 /tmp/libdragon/tools/n64elfcompress/n64elfcompress     "$N64_INST/bin/n64elfcompress"
-          echo "Tool sanity on PATH:"
-          command -v mips64-elf-gcc
-          command -v n64tool
-          command -v mkdfs
-          command -v n64elfcompress
-
-      # Build your ROM
-      - name: Build Shattered Realms
-        shell: bash
-        run: |
-          set -e
-          export PATH="$N64_INST/bin:$PATH"
-          make -n showpaths >/dev/null 2>&1 && { echo '--- Makefile paths ---'; make showpaths; echo '----------------------'; } || true
-          make clean all 2>&1 | tee build.log
-          echo "Built files:"
-          ls -l shattered_realms.* romfs.dfs || true
-          if [ -f shattered_realms.z64 ]; then
-            echo "ROM header (16 bytes):"
-            xxd -l 16 -g 1 shattered_realms.z64 || true
-          fi
-
-      - name: Upload artifacts
+      - name: Upload build artifacts (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: shattered_realms
+          name: n64-build-output-MF${{ steps.build.outputs.MFREV }}-BL${{ steps.build.outputs.BLREV }}-MC${{ steps.build.outputs.MCREV }}-${{ steps.build.outputs.SHORT_SHA }}
           path: |
+            build.log
             shattered_realms.z64
             shattered_realms.elf
+            shattered_realms.bin
             romfs.dfs
-            build.log
-          if-no-files-found: error
+          if-no-files-found: warn
