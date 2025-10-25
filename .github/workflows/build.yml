@@ -11,15 +11,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Run ALL steps inside the libdragon toolchain container
+    container:
+      image: ghcr.io/dragonminded/libdragon:latest
+
+    # Default shell = bash
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      N64_INST: /opt/libdragon
+      PATH: /opt/libdragon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # ensures git log -1 works
+          fetch-depth: 2
+
+      - name: Mark workspace as safe for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Parse revision tokens from commit message
         id: revs
-        shell: bash
         run: |
           set -e
           COMMIT_MSG="$(git log -1 --pretty=%B | tr '\n' ' ')"
@@ -35,48 +50,40 @@ jobs:
           echo "MCREV=$MCREV" >> $GITHUB_OUTPUT
           echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
 
-      - name: Pull libdragon toolchain image
-        run: docker pull ghcr.io/dragonminded/libdragon:latest
+      - name: Toolchain diagnostics (non-fatal)
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== which mips64-elf-gcc ==="; command -v mips64-elf-gcc || true
+          echo "=== mips64-elf-gcc --version ==="; mips64-elf-gcc --version | head -n 1 || true
+          echo "=== which n64tool ==="; command -v n64tool || true
+          echo "=== which n64elfcompress ==="; command -v n64elfcompress || true
+          echo "=== ls /opt/libdragon ==="; ls -l /opt/libdragon || true
+          echo "=== ls /opt/libdragon/mips64-elf/include ==="; ls -l /opt/libdragon/mips64-elf/include | head -n 5 || true
 
-      - name: Build inside libdragon image (discover tools; stamp ROM title)
-        shell: bash
+      - name: Show Makefile paths
+        run: |
+          make -n showpaths >/dev/null 2>&1 && { echo '--- Makefile paths ---'; make showpaths; echo '----------------------'; } || true
+
+      - name: Build (always log; stamp ROM title)
         run: |
           set -e
-          UIDGID="$(id -u):$(id -g)"
-          docker run --rm \
-            -u "$UIDGID" \
-            -v "$PWD":/work -w /work \
-            ghcr.io/dragonminded/libdragon:latest \
-            bash -lc '
-              set -e
-              export N64_INST=/opt/libdragon
-              export PATH="$N64_INST/bin:$PATH"
+          export TITLE="SR MF${{ steps.revs.outputs.MFREV }} MC${{ steps.revs.outputs.MCREV }}"
+          # Force PATH-discovered tools through the Makefile's override vars
+          CC="$(command -v mips64-elf-gcc)"
+          N64TOOL="$(command -v n64tool)"
+          ELFCOMPRESS="$(command -v n64elfcompress)"
+          echo "Using: CC=$CC  N64TOOL=$N64TOOL  ELFCOMPRESS=$ELFCOMPRESS"
+          ( make clean all CC="$CC" N64TOOL="$N64TOOL" ELFCOMPRESS="$ELFCOMPRESS" TITLE="$TITLE" ) 2>&1 | tee build.log || true
 
-              # Discover tool paths from PATH (don’t hard-code /opt paths)
-              CC="$(command -v mips64-elf-gcc)"
-              N64TOOL="$(command -v n64tool)"
-              ELFCOMPRESS="$(command -v n64elfcompress)"
-              echo "Detected tools:"; echo "  CC=$CC"; echo "  N64TOOL=$N64TOOL"; echo "  ELFCOMPRESS=$ELFCOMPRESS"
+          echo "Built files (post-build):"
+          ls -l shattered_realms.* romfs.dfs || true
+          if [ -f shattered_realms.z64 ]; then
+            echo "ROM header (16 bytes):"
+            xxd -l 16 -g 1 shattered_realms.z64 || true
+          fi
 
-              # Short ROM title (<=20 chars). Example: "SR MF079 MC030"
-              TITLE="SR MF'${{ steps.revs.outputs.MFREV }}' MC'${{ steps.revs.outputs.MCREV }}'"
-
-              # Show paths from Makefile (optional)
-              make -n showpaths >/dev/null 2>&1 || true
-
-              # Build; always emit build.log even on failure
-              ( make clean all CC="$CC" N64TOOL="$N64TOOL" ELFCOMPRESS="$ELFCOMPRESS" TITLE="$TITLE" ) 2>&1 | tee build.log || true
-
-              echo "Built files (inside container):"
-              ls -l shattered_realms.* romfs.dfs || true
-
-              if [ -f shattered_realms.z64 ]; then
-                echo "ROM header (16 bytes):"
-                xxd -l 16 -g 1 shattered_realms.z64 || true
-              fi
-            '
-
-      - name: Upload build artifacts (always)
+      - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
