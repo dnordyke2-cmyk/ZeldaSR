@@ -2,9 +2,11 @@
 N64_INST ?= /opt/libdragon
 
 CC          := $(N64_INST)/bin/mips64-elf-gcc
-OBJCOPY     := $(N64_INST)/bin/mips64-elf-objcopy
 N64TOOL     := $(N64_INST)/bin/n64tool
 ELFCOMPRESS := $(N64_INST)/bin/n64elfcompress
+
+# Allow CI to override the ROM title (<=20 chars recommended)
+TITLE ?= SHAT REALMS
 
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
            -I$(N64_INST)/mips64-elf/include
@@ -22,13 +24,12 @@ all: $(TARGET).z64
 $(TARGET).elf: $(OBJECTS)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-# Produce a single compressed binary (NOT .bin64)
+# NOTE: Correct arg order: OUT first, then IN.
 $(TARGET).bin: $(TARGET).elf
-	$(ELFCOMPRESS) $< $@
+	$(ELFCOMPRESS) $@ $<
 
-# Build the final ROM. Size -l 2M is fine for a hello; bump later as needed.
 $(TARGET).z64: $(TARGET).bin
-	$(N64TOOL) -l 2M -t "SHAT REALMS" -h $(N64_INST)/mips64-elf/lib/header -o $@ $<
+	$(N64TOOL) -l 2M -t "$(TITLE)" -h $(N64_INST)/mips64-elf/lib/header -o $@ $<
 
 clean:
 	rm -f $(OBJECTS) $(TARGET).elf $(TARGET).bin $(TARGET).z64
