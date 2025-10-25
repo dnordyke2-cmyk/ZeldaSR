@@ -1,13 +1,12 @@
-# Libdragon Makefile (v7): discover tools via PATH; no hard-coded /opt/bin calls
-# If PATH discovery fails, we fall back to N64_INST.
+# Libdragon Makefile (v8): discover tools via PATH; never call host 'cc'
 N64_INST ?= /opt/libdragon
 
-# Force (override) discovery so Make can't default to host 'cc'
+# Prefer PATH tools; fall back to N64_INST. "override" prevents make's built-ins.
 override CC          := $(or $(shell command -v mips64-elf-gcc 2>/dev/null),$(N64_INST)/bin/mips64-elf-gcc)
 override N64TOOL     := $(or $(shell command -v n64tool 2>/dev/null),$(N64_INST)/bin/n64tool)
 override ELFCOMPRESS := $(or $(shell command -v n64elfcompress 2>/dev/null),$(N64_INST)/bin/n64elfcompress)
 
-# Short ROM title (≤20 chars). CI can override with: make TITLE="SR MF079 MC030"
+# Title can be set by CI: make TITLE="SR MF079 MC030"
 TITLE ?= SHAT REALMS
 
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
@@ -20,13 +19,12 @@ OBJECTS := $(SOURCES:.c=.o)
 TARGET  := shattered_realms
 
 .PHONY: all clean showpaths
-
 all: $(TARGET).z64
 
 $(TARGET).elf: $(OBJECTS)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-# CORRECT order: n64elfcompress OUT then IN
+# n64elfcompress: OUT first, then IN
 $(TARGET).bin: $(TARGET).elf
 	$(ELFCOMPRESS) $@ $<
 
