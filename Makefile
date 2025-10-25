@@ -1,15 +1,15 @@
-# Minimal, known-good Makefile for libdragon hello app
+# Minimal, known-good Makefile for a libdragon app
 N64_INST ?= /opt/libdragon
 
-CC         := $(N64_INST)/bin/mips64-elf-gcc
-OBJCOPY    := $(N64_INST)/bin/mips64-elf-objcopy
-N64TOOL    := $(N64_INST)/bin/n64tool
-ELFCOMPRESS:= $(N64_INST)/bin/n64elfcompress
+CC          := $(N64_INST)/bin/mips64-elf-gcc
+OBJCOPY     := $(N64_INST)/bin/mips64-elf-objcopy
+N64TOOL     := $(N64_INST)/bin/n64tool
+ELFCOMPRESS := $(N64_INST)/bin/n64elfcompress
 
 CFLAGS  := -std=gnu11 -O2 -G0 -Wall -Wextra -ffunction-sections -fdata-sections \
            -I$(N64_INST)/mips64-elf/include
-LDFLAGS := -L$(N64_INST)/mips64-elf/lib -ldragon -lm \
-           -T $(N64_INST)/mips64-elf/lib/n64.ld -Wl,--gc-sections
+LDFLAGS := -T $(N64_INST)/mips64-elf/lib/n64.ld -Wl,--gc-sections -L$(N64_INST)/mips64-elf/lib
+LDLIBS  := -ldragon -lc -lm -ldragonsys
 
 SOURCES := src/main.c
 OBJECTS := $(SOURCES:.c=.o)
@@ -20,11 +20,13 @@ TARGET  := shattered_realms
 all: $(TARGET).z64
 
 $(TARGET).elf: $(OBJECTS)
-	$(CC) -o $@ $^ $(LDFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
+# Produce a single compressed binary (NOT .bin64)
 $(TARGET).bin: $(TARGET).elf
 	$(ELFCOMPRESS) $< $@
 
+# Build the final ROM. Size -l 2M is fine for a hello; bump later as needed.
 $(TARGET).z64: $(TARGET).bin
 	$(N64TOOL) -l 2M -t "SHAT REALMS" -h $(N64_INST)/mips64-elf/lib/header -o $@ $<
 
@@ -35,6 +37,7 @@ clean:
 	$(CC) $(CFLAGS) -c $< -o $@
 
 showpaths:
+	@echo "--- Makefile paths ---"
 	@echo "TOOLCHAIN:"
 	@echo "  CC  = $(CC)"
 	@echo "TOOLS:"
@@ -45,3 +48,4 @@ showpaths:
 	@echo "  LIBDIR  = $(N64_INST)/mips64-elf/lib"
 	@echo "  LDSCRIPT= $(N64_INST)/mips64-elf/lib/n64.ld"
 	@echo "SOURCES = $(SOURCES)"
+	@echo "----------------------"
